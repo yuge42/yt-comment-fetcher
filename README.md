@@ -1,5 +1,23 @@
 # YouTube Live Comment Fetcher
 
+## Development
+
+### YouTube API Mock Server
+
+For local development, you can use the YouTube API Mock server:
+
+```bash
+docker compose up
+```
+
+This will start the mock server at `http://localhost:8080`.
+
+To stop the server:
+
+```bash
+docker compose down
+```
+
 ## License
 
 Licensed under either of
