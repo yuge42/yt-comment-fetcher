@@ -10,7 +10,7 @@ For local development, you can use the YouTube API Mock server:
 docker compose up
 ```
 
-This will start the mock server at `http://localhost:8080`.
+This will start the gRPC mock server at `localhost:50051`.
 
 To stop the server:
 

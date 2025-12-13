@@ -2,6 +2,6 @@ services:
   yt-api-mock:
     image: ghcr.io/yuge42/yt-api-mock/server:dev-2d0d5f2
     ports:
-      - "8080:8080"
+      - "50051:50051"
     environment:
       - LOG_LEVEL=info
