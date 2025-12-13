@@ -18,6 +18,22 @@ To stop the server:
 docker compose down
 ```
 
+### Verifying the Mock Server
+
+You can verify the server is running using `grpcurl` with the proto definitions from the submodule.
+
+**List available services:**
+
+```bash
+grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 list
+```
+
+**Stream chat messages:**
+
+```bash
+grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 youtube.api.v3.V3DataLiveChatMessageService/StreamList
+```
+
 ## License
 
 Licensed under either of
