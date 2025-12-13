@@ -12,6 +12,12 @@ at your option.
 Some external dependencies may carry additional copyright notices and license terms.
 When building and distributing binaries, those external library licenses may be included.
 
+### Proto Definitions
+
+This project uses proto definitions from [yt-api-proto](https://github.com/yuge42/yt-api-proto), 
+which is licensed under the Apache License, Version 2.0. Binaries distributed from this project 
+will contain work derived from these proto definitions.
+
 ### Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted
