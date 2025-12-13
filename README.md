@@ -1,4 +1,4 @@
-# rs-template
+# YouTube Live Comment Fetcher
 
 ## License
 
