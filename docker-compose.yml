@@ -1,6 +1,6 @@
 services:
   yt-api-mock:
-    image: ghcr.io/yuge42/yt-api-mock/server:dev-2d0d5f2
+    image: ghcr.io/yuge42/yt-api-mock/server:dev-d0618fd
     ports:
       - "50051:50051"
     environment:
