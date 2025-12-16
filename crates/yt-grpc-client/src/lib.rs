@@ -30,7 +30,7 @@ impl YouTubeClient {
             profile_image_size: None,
             max_results: None,
             page_token: None,
-            part: vec![],
+            part: vec!["snippet".to_string(), "authorDetails".to_string()],
         });
 
         let response = self.client.stream_list(request).await?;
