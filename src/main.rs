@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Print message when connection ends
-    println!("Connection ended");
+    eprintln!("Connection ended");
 
     Ok(())
 }
