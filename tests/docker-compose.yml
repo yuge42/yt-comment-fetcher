@@ -1,0 +1,35 @@
+services:
+  yt-api-mock:
+    image: ghcr.io/yuge42/yt-api-mock/server:dev-d0618fd
+    ports:
+      - "50051:50051"
+    environment:
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - yt-test
+
+  tests:
+    build:
+      context: ..
+      dockerfile: tests/Dockerfile
+    depends_on:
+      yt-api-mock:
+        condition: service_healthy
+    environment:
+      - SERVER_ADDRESS=yt-api-mock:50051
+      - FETCHER_BINARY=/fetcher/yt-comment-fetcher
+    networks:
+      - yt-test
+    volumes:
+      - ./reports:/tests/reports
+      - ./logs:/tests/logs
+
+networks:
+  yt-test:
+    driver: bridge
