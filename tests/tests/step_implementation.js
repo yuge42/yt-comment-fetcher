@@ -5,6 +5,13 @@ const { spawn } = require('child_process');
 const assert = require('assert');
 const path = require('path');
 
+// Configuration constants
+const STARTUP_TIMEOUT_MS = 2000;
+const MAX_WAIT_TIME_MS = 10000;
+const CHECK_INTERVAL_MS = 500;
+const MIN_MESSAGES_FOR_AUTO_RESOLVE = 5;
+const SHUTDOWN_GRACE_PERIOD_MS = 1000;
+
 let fetcherProcess = null;
 let receivedLines = [];
 let serverAddress = null;
@@ -39,7 +46,7 @@ step('Start the fetcher application', async function () {
     let startupTimeout = setTimeout(() => {
       console.log('Fetcher started (timeout reached)');
       resolve();
-    }, 2000);
+    }, STARTUP_TIMEOUT_MS);
 
     fetcherProcess.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
@@ -79,20 +86,18 @@ step('Start the fetcher application', async function () {
 // Wait for fetcher to connect and receive messages
 step('Wait for fetcher to connect and receive messages', async function () {
   return new Promise((resolve) => {
-    // Wait up to 10 seconds for messages to be received
-    const maxWaitTime = 10000;
-    const checkInterval = 500;
+    // Wait for messages to be received or timeout
     let elapsedTime = 0;
     
     const checkMessages = setInterval(() => {
-      elapsedTime += checkInterval;
+      elapsedTime += CHECK_INTERVAL_MS;
       
-      if (receivedLines.length >= 5 || elapsedTime >= maxWaitTime) {
+      if (receivedLines.length >= MIN_MESSAGES_FOR_AUTO_RESOLVE || elapsedTime >= MAX_WAIT_TIME_MS) {
         clearInterval(checkMessages);
         console.log(`Received ${receivedLines.length} lines after ${elapsedTime}ms`);
         resolve();
       }
-    }, checkInterval);
+    }, CHECK_INTERVAL_MS);
   });
 });
 
@@ -163,8 +168,8 @@ step('Stop the fetcher application', async function () {
     console.log('Stopping fetcher process...');
     fetcherProcess.kill('SIGTERM');
     
-    // Wait a bit for graceful shutdown
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Wait for graceful shutdown
+    await new Promise(resolve => setTimeout(resolve, SHUTDOWN_GRACE_PERIOD_MS));
     
     // Force kill if still running
     if (!fetcherProcess.killed) {
