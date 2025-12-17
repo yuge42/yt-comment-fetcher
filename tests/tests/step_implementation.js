@@ -28,12 +28,12 @@ step('Start the fetcher application', async function () {
     // Spawn the fetcher process
     // The fetcher reads SERVER_ADDRESS from environment if we want to pass it
     // For now, we assume it connects to localhost:50051 by default or we can modify main.rs
+    const env = Object.assign({}, process.env);
+    // If the fetcher supports SERVER_ADDRESS env var, pass it here
+    // Otherwise, it defaults to localhost:50051
+    
     fetcherProcess = spawn(binaryPath, [], {
-      env: {
-        ...process.env,
-        // If the fetcher supports SERVER_ADDRESS env var, pass it here
-        // Otherwise, it defaults to localhost:50051
-      }
+      env: env
     });
 
     let startupTimeout = setTimeout(() => {
@@ -135,11 +135,11 @@ step('Verify each JSON line has author details in items', async function () {
     
     message.items.forEach((item, itemIndex) => {
       assert.ok(
-        item.authorDetails,
+        item.author_details,
         `Item ${itemIndex} in line ${index} has no author details`
       );
       assert.ok(
-        item.authorDetails.displayName,
+        item.author_details.display_name,
         `Item ${itemIndex} in line ${index} has no display name`
       );
     });
