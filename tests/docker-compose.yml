@@ -5,12 +5,6 @@ services:
       - "50051:50051"
     environment:
       - LOG_LEVEL=info
-    healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 50051 || exit 1"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
     networks:
       - yt-test
 
@@ -19,8 +13,7 @@ services:
       context: ..
       dockerfile: tests/Dockerfile
     depends_on:
-      yt-api-mock:
-        condition: service_healthy
+      - yt-api-mock
     environment:
       - SERVER_ADDRESS=yt-api-mock:50051
       - FETCHER_BINARY=/fetcher/yt-comment-fetcher
@@ -29,6 +22,8 @@ services:
     volumes:
       - ./reports:/tests/reports
       - ./logs:/tests/logs
+    # Add a small delay to let the server start before running tests
+    command: sh -c "sleep 3 && npm test"
 
 networks:
   yt-test:
