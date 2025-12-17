@@ -22,8 +22,25 @@ services:
     volumes:
       - ./reports:/tests/reports
       - ./logs:/tests/logs
-    # Add a small delay to let the server start before running tests
-    command: sh -c "sleep 3 && npm test"
+    # Wait for server to be accessible before running tests
+    command: >
+      sh -c "
+        echo 'Waiting for yt-api-mock to be ready...';
+        max_attempts=30;
+        attempt=0;
+        while [ $$attempt -lt $$max_attempts ]; do
+          if nc -z yt-api-mock 50051 2>/dev/null; then
+            echo 'yt-api-mock is ready!';
+            npm test;
+            exit $$?;
+          fi;
+          attempt=$$((attempt + 1));
+          echo 'Waiting for yt-api-mock... (attempt '$$attempt'/'$$max_attempts')';
+          sleep 1;
+        done;
+        echo 'ERROR: yt-api-mock did not become ready in time';
+        exit 1;
+      "
 
 networks:
   yt-test:

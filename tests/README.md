@@ -79,9 +79,9 @@ make docker-test
 
 This will:
 - Build the fetcher binary using the Rust toolchain
-- Start the mock YouTube API server with health checks
+- Start the mock YouTube API server
 - Build the test environment with Gauge and Node.js
-- Wait for the server to be healthy
+- Wait for the server to be ready (using netcat to check port 50051)
 - Run the Gauge E2E tests
 - Stop all containers when tests complete
 - Exit with the test container's exit code
