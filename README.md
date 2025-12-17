@@ -1,5 +1,16 @@
 # YouTube Live Comment Fetcher
 
+## Usage
+
+Start the mock server and run the application:
+
+```bash
+docker compose up -d
+cargo run
+```
+
+This will connect to the mock API server and stream comments to stdout as JSON. Press Ctrl+C to stop.
+
 ## Development
 
 ### YouTube API Mock Server
