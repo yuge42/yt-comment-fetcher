@@ -16,7 +16,11 @@ pub struct YouTubeClient {
 
 impl YouTubeClient {
     pub async fn connect(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
-        let client = v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient::connect(addr).await?;
+        let client =
+            v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient::connect(
+                addr,
+            )
+            .await?;
         Ok(YouTubeClient { client })
     }
 
