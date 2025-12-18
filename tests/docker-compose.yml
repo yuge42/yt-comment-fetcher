@@ -5,6 +5,14 @@ services:
       - "50051:50051"
     environment:
       - LOG_LEVEL=info
+    healthcheck:
+      # Note: nc is not available in this image version, so we check if the server process is running
+      # The reference implementation uses: ["CMD", "sh", "-c", "nc -z localhost 50051 || exit 1"]
+      test: ["CMD", "sh", "-c", "kill -0 1 || exit 1"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
     networks:
       - yt-test
 
@@ -13,7 +21,8 @@ services:
       context: ..
       dockerfile: tests/Dockerfile
     depends_on:
-      - yt-api-mock
+      yt-api-mock:
+        condition: service_healthy
     environment:
       - SERVER_ADDRESS=yt-api-mock:50051
       - FETCHER_BINARY=/fetcher/yt-comment-fetcher
@@ -22,25 +31,6 @@ services:
     volumes:
       - ./reports:/tests/reports
       - ./logs:/tests/logs
-    # Wait for server to be accessible before running tests
-    command: >
-      sh -c "
-        echo 'Waiting for yt-api-mock to be ready...';
-        max_attempts=30;
-        attempt=0;
-        while [ $$attempt -lt $$max_attempts ]; do
-          if nc -z yt-api-mock 50051 2>/dev/null; then
-            echo 'yt-api-mock is ready!';
-            npm test;
-            exit $$?;
-          fi;
-          attempt=$$((attempt + 1));
-          echo 'Waiting for yt-api-mock... (attempt '$$attempt'/'$$max_attempts')';
-          sleep 1;
-        done;
-        echo 'ERROR: yt-api-mock did not become ready in time';
-        exit 1;
-      "
 
 networks:
   yt-test:
