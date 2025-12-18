@@ -21,7 +21,9 @@ For local development, you can use the YouTube API Mock server:
 docker compose up
 ```
 
-This will start the gRPC mock server at `localhost:50051`.
+This will start the mock server with:
+- **gRPC server** (live chat) at `localhost:50051`
+- **REST server** (videos API) at `localhost:8080`
 
 To stop the server:
 
@@ -31,15 +33,21 @@ docker compose down
 
 ### Verifying the Mock Server
 
-You can verify the server is running using `grpcurl` with the proto definitions from the submodule.
+You can verify the server is running using `grpcurl` for gRPC endpoints and `curl` for REST endpoints.
 
-**List available services:**
+**Get video with Live Chat ID (REST):**
+
+```bash
+curl "http://localhost:8080/youtube/v3/videos?part=liveStreamingDetails&id=test-video-1"
+```
+
+**List available gRPC services:**
 
 ```bash
 grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 list
 ```
 
-**Stream chat messages:**
+**Stream chat messages (gRPC):**
 
 ```bash
 grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 youtube.api.v3.V3DataLiveChatMessageService/StreamList
