@@ -1,14 +1,12 @@
 services:
   yt-api-mock:
-    image: ghcr.io/yuge42/yt-api-mock/server:dev-d0618fd
+    image: ghcr.io/yuge42/yt-api-mock/server:dev-194b6a9
     ports:
       - "50051:50051"
     environment:
       - LOG_LEVEL=info
     healthcheck:
-      # Note: nc is not available in this image version, so we check if the server process is running
-      # The reference implementation uses: ["CMD", "sh", "-c", "nc -z localhost 50051 || exit 1"]
-      test: ["CMD", "sh", "-c", "kill -0 1 || exit 1"]
+      test: ["CMD", "sh", "-c", "nc -z localhost 50051 || exit 1"]
       interval: 2s
       timeout: 5s
       retries: 10

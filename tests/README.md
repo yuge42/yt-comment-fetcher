@@ -81,7 +81,7 @@ This will:
 - Build the fetcher binary using the Rust toolchain
 - Start the mock YouTube API server with health checks
 - Build the test environment with Gauge and Node.js
-- Wait for the server to be healthy (using `kill -0` to check if server process is running)
+- Wait for the server to be healthy (using `nc -z localhost 50051` to verify port is listening)
 - Run the Gauge E2E tests
 - Stop all containers when tests complete
 - Exit with the test container's exit code
