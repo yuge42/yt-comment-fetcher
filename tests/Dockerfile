@@ -31,27 +31,14 @@ WORKDIR /tests
 # Copy package files first for better caching
 COPY tests/package*.json ./
 
-# Install npm dependencies
+# Install npm dependencies (if any)
 RUN npm install
 
 # Copy the rest of the test files
 COPY tests/ .
 
-# Copy the proto directory
-COPY proto /tests/../proto
-
 # Copy the built fetcher binary from builder
 COPY --from=builder /build/target/release/yt-comment-fetcher /fetcher/yt-comment-fetcher
-
-# Create entrypoint script to generate proto and run tests
-RUN echo '#!/bin/sh\n\
-if [ ! -d "proto-gen" ]; then\n\
-  echo "Generating proto client code..."\n\
-  npm run proto:generate\n\
-fi\n\
-exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
 
 # Default command to run tests
 CMD ["npm", "test"]

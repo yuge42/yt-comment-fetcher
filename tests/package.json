@@ -1,14 +1,8 @@
 {
   "name": "yt-comment-fetcher-tests",
-  "description": "E2E tests for YouTube Comment Fetcher using Gauge and gRPC",
+  "description": "E2E tests for YouTube Comment Fetcher using Gauge",
   "scripts": {
-    "test": "gauge run specs/",
-    "proto:generate": "mkdir -p proto-gen && grpc_tools_node_protoc --js_out=import_style=commonjs,binary:./proto-gen --grpc_out=grpc_js:./proto-gen --plugin=protoc-gen-grpc=node_modules/grpc-tools/bin/grpc_node_plugin --proto_path=../proto ../proto/stream_list.proto"
+    "test": "gauge run specs/"
   },
-  "dependencies": {
-    "@grpc/grpc-js": "^1.14.3",
-    "@grpc/proto-loader": "^0.8.0",
-    "google-protobuf": "^4.0.1",
-    "grpc-tools": "^1.13.1"
-  }
+  "dependencies": {}
 }
