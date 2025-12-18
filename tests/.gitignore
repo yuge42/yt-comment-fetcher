@@ -1,0 +1,13 @@
+# Gauge artifacts
+reports/
+logs/
+.gauge/
+
+# Node modules
+node_modules/
+
+# Generated proto files
+proto-gen/
+
+# Lock files
+package-lock.json

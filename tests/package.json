@@ -1,0 +1,8 @@
+{
+  "name": "yt-comment-fetcher-tests",
+  "description": "E2E tests for YouTube Comment Fetcher using Gauge",
+  "scripts": {
+    "test": "gauge run specs/"
+  },
+  "dependencies": {}
+}
