@@ -1,4 +1,4 @@
-/* globals gauge, step, beforeScenario */
+/* globals gauge, step, beforeScenario, afterScenario */
 'use strict';
 
 const { spawn } = require('child_process');
@@ -12,20 +12,66 @@ const CHECK_INTERVAL_MS = 500;
 const MIN_MESSAGES_FOR_AUTO_RESOLVE = 5;
 const SHUTDOWN_GRACE_PERIOD_MS = 1000;
 
-let fetcherProcess = null;
-let receivedLines = [];
-let serverAddress = null;
+// Helper functions to access scenario data store
+function getStore() {
+  return gauge.dataStore.scenarioStore;
+}
+
+function setFetcherProcess(process) {
+  getStore().put('fetcherProcess', process);
+}
+
+function getFetcherProcess() {
+  return getStore().get('fetcherProcess');
+}
+
+function setReceivedLines(lines) {
+  getStore().put('receivedLines', lines);
+}
+
+function getReceivedLines() {
+  return getStore().get('receivedLines') || [];
+}
+
+function setServerAddress(address) {
+  getStore().put('serverAddress', address);
+}
+
+function getServerAddress() {
+  return getStore().get('serverAddress');
+}
+
+// Initialize scenario store before each scenario
+beforeScenario(async function() {
+  setReceivedLines([]);
+  setFetcherProcess(null);
+  setServerAddress(null);
+});
+
+// Cleanup after each scenario
+afterScenario(async function() {
+  const fetcherProcess = getFetcherProcess();
+  if (fetcherProcess && !fetcherProcess.killed) {
+    console.log('Cleaning up fetcher process in afterScenario...');
+    fetcherProcess.kill('SIGTERM');
+    await new Promise(resolve => setTimeout(resolve, SHUTDOWN_GRACE_PERIOD_MS));
+    if (!fetcherProcess.killed) {
+      fetcherProcess.kill('SIGKILL');
+    }
+  }
+});
 
 // Store server address from environment or default
 step('Server address from environment variable <envVar> or default <defaultAddress>', async function (envVar, defaultAddress) {
-  serverAddress = process.env[envVar] || defaultAddress;
+  const serverAddress = process.env[envVar] || defaultAddress;
+  setServerAddress(serverAddress);
   console.log(`Server address set to: ${serverAddress}`);
 });
 
 // Start the fetcher application
 step('Start the fetcher application', async function () {
   return new Promise((resolve, reject) => {
-    receivedLines = [];
+    setReceivedLines([]);
     
     // Determine the binary path - assuming it's built in target/debug or target/release
     const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
@@ -35,13 +81,16 @@ step('Start the fetcher application', async function () {
     // Spawn the fetcher process
     // The fetcher reads SERVER_ADDRESS from environment if we want to pass it
     const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
     if (serverAddress) {
       env.SERVER_ADDRESS = serverAddress;
     }
     
-    fetcherProcess = spawn(binaryPath, [], {
+    const fetcherProcess = spawn(binaryPath, [], {
       env: env
     });
+    
+    setFetcherProcess(fetcherProcess);
 
     let startupTimeout = setTimeout(() => {
       console.log('Fetcher started (timeout reached)');
@@ -50,10 +99,12 @@ step('Start the fetcher application', async function () {
 
     fetcherProcess.stdout.on('data', (data) => {
       const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
+      const receivedLines = getReceivedLines();
       lines.forEach(line => {
         console.log(`Fetcher stdout: ${line}`);
         receivedLines.push(line);
       });
+      setReceivedLines(receivedLines);
       
       // Once we start receiving data, resolve the startup promise
       if (receivedLines.length > 0 && startupTimeout) {
@@ -91,6 +142,7 @@ step('Wait for fetcher to connect and receive messages', async function () {
     
     const checkMessages = setInterval(() => {
       elapsedTime += CHECK_INTERVAL_MS;
+      const receivedLines = getReceivedLines();
       
       if (receivedLines.length >= MIN_MESSAGES_FOR_AUTO_RESOLVE || elapsedTime >= MAX_WAIT_TIME_MS) {
         clearInterval(checkMessages);
@@ -103,6 +155,7 @@ step('Wait for fetcher to connect and receive messages', async function () {
 
 // Verify fetcher outputs valid JSON stream
 step('Verify fetcher outputs valid JSON stream', async function () {
+  const receivedLines = getReceivedLines();
   assert.ok(receivedLines.length > 0, 'No output received from fetcher');
   
   receivedLines.forEach((line, index) => {
@@ -119,6 +172,7 @@ step('Verify fetcher outputs valid JSON stream', async function () {
 
 // Verify each JSON line has kind
 step('Verify each JSON line has kind <kind>', async function (kind) {
+  const receivedLines = getReceivedLines();
   receivedLines.forEach((line, index) => {
     const message = JSON.parse(line);
     assert.strictEqual(
@@ -132,6 +186,7 @@ step('Verify each JSON line has kind <kind>', async function (kind) {
 
 // Verify each JSON line has author details
 step('Verify each JSON line has author details in items', async function () {
+  const receivedLines = getReceivedLines();
   receivedLines.forEach((line, index) => {
     const message = JSON.parse(line);
     assert.ok(message.items, `Line ${index} has no items field`);
@@ -154,6 +209,7 @@ step('Verify each JSON line has author details in items', async function () {
 
 // Verify minimum number of messages received
 step('Verify received at least <count> JSON messages', async function (count) {
+  const receivedLines = getReceivedLines();
   const expectedCount = parseInt(count, 10);
   assert.ok(
     receivedLines.length >= expectedCount,
@@ -164,6 +220,7 @@ step('Verify received at least <count> JSON messages', async function (count) {
 
 // Stop the fetcher application
 step('Stop the fetcher application', async function () {
+  const fetcherProcess = getFetcherProcess();
   if (fetcherProcess) {
     console.log('Stopping fetcher process...');
     fetcherProcess.kill('SIGTERM');
@@ -176,7 +233,7 @@ step('Stop the fetcher application', async function () {
       fetcherProcess.kill('SIGKILL');
     }
     
-    fetcherProcess = null;
+    setFetcherProcess(null);
     console.log('Fetcher process stopped');
   }
 });
