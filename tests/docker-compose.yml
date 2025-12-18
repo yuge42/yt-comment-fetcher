@@ -7,7 +7,7 @@ services:
     environment:
       - LOG_LEVEL=info
     healthcheck:
-      test: ["CMD", "sh", "-c", "nc -z localhost 50051 && nc -z localhost 8080 || exit 1"]
+      test: ["CMD", "sh", "-c", "(nc -z localhost 50051 && nc -z localhost 8080) || exit 1"]
       interval: 2s
       timeout: 5s
       retries: 10
