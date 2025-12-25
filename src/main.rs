@@ -29,12 +29,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Got chat ID: {}", chat_id);
 
     // Get gRPC server address from environment variable or use default
+    // Note: For TLS-enabled gRPC connections, tonic requires https:// prefix
     let server_address =
         std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "https://localhost:50051".to_string());
     let server_url =
         if server_address.starts_with("http://") || server_address.starts_with("https://") {
             server_address
         } else {
+            // Default to https:// for secure connections
             format!("https://{}", server_address)
         };
 

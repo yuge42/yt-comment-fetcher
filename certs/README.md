@@ -22,6 +22,13 @@ This will create:
 
 The generated certificates are git-ignored for security reasons. Each developer/environment should generate their own certificates.
 
+**Security Note**: The server private key (`server-key.pem`) is set to world-readable permissions (644) to allow Docker containers to read it when mounted as a volume. This is acceptable for development because:
+- The certificates are self-signed and only valid for local development
+- They are not trusted by any production systems
+- The keys are git-ignored and never committed to the repository
+
+In production environments, private keys should be stored securely (e.g., Kubernetes secrets, cloud secret managers) with proper access controls.
+
 ## Certificate Details
 
 - The CA certificate is valid for 10 years (3650 days)

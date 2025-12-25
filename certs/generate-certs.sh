@@ -67,6 +67,11 @@ openssl x509 -req -days 365 \
 rm -f "${CERTS_DIR}/server-csr.pem" "${CERTS_DIR}/server-ext.cnf" "${CERTS_DIR}/ca-cert.srl"
 
 # Set appropriate permissions
+# Note: server-key.pem is set to 644 (readable by all) to allow the Docker container
+# to read it when mounted as a volume. In a production environment, this key would
+# be stored securely (e.g., Kubernetes secrets, AWS Secrets Manager) with proper
+# access controls. For local development, the key is only used for self-signed
+# certificates and poses minimal security risk.
 chmod 600 "${CERTS_DIR}/ca-key.pem"
 chmod 644 "${CERTS_DIR}/server-key.pem" "${CERTS_DIR}/ca-cert.pem" "${CERTS_DIR}/server-cert.pem"
 
