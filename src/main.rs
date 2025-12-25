@@ -75,7 +75,7 @@ async fn fetch_chat_id(
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string());
+        let body = response.text().await?;
         return Err(format!("Failed to fetch video data (status {}): {}", status, body).into());
     }
 
