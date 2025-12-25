@@ -46,3 +46,27 @@ jobs:
 
       - name: Run tests
         run: cargo test --verbose
+
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Run E2E tests
+        run: |
+          cd tests
+          docker compose up --build --abort-on-container-exit --exit-code-from tests
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: tests/reports/
+          if-no-files-found: ignore
