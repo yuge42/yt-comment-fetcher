@@ -377,5 +377,4 @@ step('Verify fetcher exits with error about video not found', async function () 
   );
   
   console.log(`Verified exit code ${exitCode} and error message about video not found`);
-  }
 });
