@@ -74,19 +74,34 @@ async fn fetch_chat_id(
     let response = client.get(&url).send().await?;
 
     if !response.status().is_success() {
-        return Err(format!("Failed to fetch video data: {}", response.status()).into());
+        let status = response.status();
+        let body = response.text().await.unwrap_or_else(|_| "Unable to read response body".to_string());
+        return Err(format!("Failed to fetch video data (status {}): {}", status, body).into());
     }
 
     let body: serde_json::Value = response.json().await?;
 
     // Extract the activeLiveChatId from the response
-    let chat_id = body
+    let items = body
         .get("items")
-        .and_then(|items| items.get(0))
-        .and_then(|item| item.get("liveStreamingDetails"))
-        .and_then(|details| details.get("activeLiveChatId"))
+        .ok_or("Response missing 'items' field")?;
+    
+    let items_array = items
+        .as_array()
+        .ok_or("'items' field is not an array")?;
+    
+    let first_item = items_array
+        .get(0)
+        .ok_or("No video found with the given ID")?;
+    
+    let live_streaming_details = first_item
+        .get("liveStreamingDetails")
+        .ok_or("Video does not have live streaming details (not a live video)")?;
+    
+    let chat_id = live_streaming_details
+        .get("activeLiveChatId")
         .and_then(|id| id.as_str())
-        .ok_or("No active live chat ID found in video data")?;
+        .ok_or("No active live chat ID found (stream may not be active)")?;
 
     Ok(chat_id.to_string())
 }

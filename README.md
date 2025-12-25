@@ -2,14 +2,24 @@
 
 ## Usage
 
-Start the mock server and run the application:
+Start the mock server and run the application with a video ID:
 
 ```bash
 docker compose up -d
-cargo run
+cargo run -- test-video-1
 ```
 
-This will connect to the mock API server and stream comments to stdout as JSON. Press Ctrl+C to stop.
+The application will:
+1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
+2. Connect to the gRPC server and stream comments to stdout as JSON
+
+Press Ctrl+C to stop.
+
+You can also pass the video ID via environment variable:
+
+```bash
+VIDEO_ID=test-video-1 cargo run
+```
 
 ## Development
 
