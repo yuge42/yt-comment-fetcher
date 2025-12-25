@@ -20,7 +20,7 @@ Start the mock server and run the application with a video ID:
 
 ```bash
 docker compose up -d
-cargo run -- --video-id test-video-1
+CA_CERT_PATH=certs/ca-cert.pem cargo run -- --video-id test-video-1
 ```
 
 The application will:
@@ -28,6 +28,8 @@ The application will:
 2. Connect to the gRPC server and stream comments to stdout as JSON
 
 Press Ctrl+C to stop.
+
+**Note:** The `CA_CERT_PATH` environment variable must be set to trust the development CA certificate when connecting to the TLS-enabled mock server.
 
 ## Development
 

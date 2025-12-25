@@ -16,11 +16,26 @@ pub struct YouTubeClient {
 
 impl YouTubeClient {
     pub async fn connect(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+        // Build the channel with TLS configuration
+        let mut endpoint = Channel::from_shared(addr)?;
+        
+        // Check if a custom CA certificate path is provided
+        if let Ok(ca_cert_path) = std::env::var("CA_CERT_PATH") {
+            let ca_cert_pem = std::fs::read_to_string(&ca_cert_path)?;
+            let ca_cert = tonic::transport::Certificate::from_pem(ca_cert_pem);
+            
+            let tls_config = tonic::transport::ClientTlsConfig::new()
+                .ca_certificate(ca_cert);
+            
+            endpoint = endpoint.tls_config(tls_config)?;
+            eprintln!("Using custom CA certificate from: {}", ca_cert_path);
+        }
+        
+        let channel = endpoint.connect().await?;
         let client =
-            v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient::connect(
-                addr,
-            )
-            .await?;
+            v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient::new(
+                channel,
+            );
         Ok(YouTubeClient { client })
     }
 

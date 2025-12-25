@@ -67,8 +67,8 @@ openssl x509 -req -days 365 \
 rm -f "${CERTS_DIR}/server-csr.pem" "${CERTS_DIR}/server-ext.cnf" "${CERTS_DIR}/ca-cert.srl"
 
 # Set appropriate permissions
-chmod 600 "${CERTS_DIR}/ca-key.pem" "${CERTS_DIR}/server-key.pem"
-chmod 644 "${CERTS_DIR}/ca-cert.pem" "${CERTS_DIR}/server-cert.pem"
+chmod 600 "${CERTS_DIR}/ca-key.pem"
+chmod 644 "${CERTS_DIR}/server-key.pem" "${CERTS_DIR}/ca-cert.pem" "${CERTS_DIR}/server-cert.pem"
 
 echo ""
 echo "Certificate generation complete!"

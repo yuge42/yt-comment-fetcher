@@ -76,7 +76,8 @@ async fn fetch_chat_id(
         rest_api_address, video_id
     );
 
-    let client = reqwest::Client::new();
+    // Build reqwest client with custom CA certificate if provided
+    let client = build_http_client()?;
     let response = client.get(&url).send().await?;
 
     if !response.status().is_success() {
@@ -106,4 +107,18 @@ async fn fetch_chat_id(
         .ok_or("No active live chat ID found (stream may not be active)")?;
 
     Ok(chat_id.to_string())
+}
+
+fn build_http_client() -> Result<reqwest::Client, Box<dyn std::error::Error>> {
+    let mut builder = reqwest::Client::builder();
+    
+    // Check if a custom CA certificate path is provided
+    if let Ok(ca_cert_path) = std::env::var("CA_CERT_PATH") {
+        let ca_cert = std::fs::read(&ca_cert_path)?;
+        let cert = reqwest::Certificate::from_pem(&ca_cert)?;
+        builder = builder.add_root_certificate(cert);
+        eprintln!("Using custom CA certificate from: {}", ca_cert_path);
+    }
+    
+    Ok(builder.build()?)
 }
