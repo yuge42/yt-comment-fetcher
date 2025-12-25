@@ -86,7 +86,10 @@ step('Start the fetcher application', async function () {
       env.SERVER_ADDRESS = serverAddress;
     }
     
-    const fetcherProcess = spawn(binaryPath, [], {
+    // Pass the default test video ID as argument
+    const args = ['test-video-1'];
+    
+    const fetcherProcess = spawn(binaryPath, args, {
       env: env
     });
     
