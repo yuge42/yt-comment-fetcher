@@ -240,3 +240,142 @@ step('Stop the fetcher application', async function () {
     console.log('Fetcher process stopped');
   }
 });
+
+// Start the fetcher application without video ID argument
+step('Start the fetcher application without video ID argument', async function () {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher without video ID from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // No arguments - should fail
+    const args = [];
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let exitCode = null;
+    let errorOutput = '';
+
+    fetcherProcess.stdout.on('data', (data) => {
+      console.log(`Fetcher stdout: ${data}`);
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      errorOutput += output;
+    });
+
+    fetcherProcess.on('close', (code) => {
+      exitCode = code;
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', exitCode);
+      getStore().put('errorOutput', errorOutput);
+      resolve();
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+  });
+});
+
+// Start the fetcher application with invalid video ID
+step('Start the fetcher application with invalid video ID <videoId>', async function (videoId) {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher with invalid video ID from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    const args = ['--video-id', videoId];
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let errorOutput = '';
+
+    fetcherProcess.stdout.on('data', (data) => {
+      console.log(`Fetcher stdout: ${data}`);
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      errorOutput += output;
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+      getStore().put('errorOutput', errorOutput);
+      resolve();
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+    
+    // Give it time to start and fail
+    setTimeout(resolve, 3000);
+  });
+});
+
+// Wait for fetcher to attempt connection
+step('Wait for fetcher to attempt connection', async function () {
+  // Wait a bit for the fetcher to try to connect and fail
+  await new Promise(resolve => setTimeout(resolve, 2000));
+});
+
+// Verify fetcher exits with error about missing argument
+step('Verify fetcher exits with error about missing argument', async function () {
+  const exitCode = getStore().get('exitCode');
+  const errorOutput = getStore().get('errorOutput');
+  
+  assert.ok(exitCode !== 0, `Expected non-zero exit code but got ${exitCode}`);
+  assert.ok(
+    errorOutput.includes('required') || errorOutput.includes('--video-id'),
+    `Expected error about missing video-id argument but got: ${errorOutput}`
+  );
+  
+  console.log(`Verified exit code ${exitCode} and error message about missing argument`);
+});
+
+// Verify fetcher exits with error about video not found
+step('Verify fetcher exits with error about video not found', async function () {
+  const exitCode = getStore().get('exitCode');
+  const errorOutput = getStore().get('errorOutput');
+  
+  assert.ok(exitCode !== 0, `Expected non-zero exit code but got ${exitCode}`);
+  assert.ok(
+    errorOutput.includes('No video found') || errorOutput.includes('not found'),
+    `Expected error about video not found but got: ${errorOutput}`
+  );
+  
+  console.log(`Verified exit code ${exitCode} and error message about video not found`);
+  }
+});
