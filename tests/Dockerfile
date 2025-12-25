@@ -40,5 +40,9 @@ COPY tests/ .
 # Copy the built fetcher binary from builder
 COPY --from=builder /build/target/release/yt-comment-fetcher /fetcher/yt-comment-fetcher
 
+# Copy and trust the CA certificate
+COPY certs/ca-cert.pem /usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
+RUN update-ca-certificates
+
 # Default command to run tests
 CMD ["npm", "test"]

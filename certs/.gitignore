@@ -1,0 +1,11 @@
+# Ignore all certificate and key files
+*.pem
+*.key
+*.crt
+*.csr
+*.cnf
+*.srl
+
+# Keep the scripts and documentation
+!generate-certs.sh
+!README.md
