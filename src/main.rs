@@ -93,7 +93,7 @@ async fn fetch_chat_id(
     let items_array = items.as_array().ok_or("'items' field is not an array")?;
 
     let first_item = items_array
-        .get(0)
+        .first()
         .ok_or("No video found with the given ID")?;
 
     let live_streaming_details = first_item
