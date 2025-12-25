@@ -22,6 +22,7 @@ tonic = "0.12"
 prost = "0.13"
 tonic-build = "0.12"
 reqwest = { version = "0.12", features = ["json"] }
+clap = { version = "4.5", features = ["derive"] }
 
 [package]
 name = "yt-comment-fetcher"
@@ -41,3 +42,4 @@ tokio-stream = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+clap = { workspace = true }

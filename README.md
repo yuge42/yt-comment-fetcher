@@ -6,7 +6,7 @@ Start the mock server and run the application with a video ID:
 
 ```bash
 docker compose up -d
-cargo run -- test-video-1
+cargo run -- --video-id test-video-1
 ```
 
 The application will:
@@ -14,12 +14,6 @@ The application will:
 2. Connect to the gRPC server and stream comments to stdout as JSON
 
 Press Ctrl+C to stop.
-
-You can also pass the video ID via environment variable:
-
-```bash
-VIDEO_ID=test-video-1 cargo run
-```
 
 ## Development
 

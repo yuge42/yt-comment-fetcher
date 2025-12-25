@@ -1,15 +1,21 @@
+use clap::Parser;
 use tokio_stream::StreamExt;
 use yt_grpc_client::YouTubeClient;
 
+/// YouTube Live Comment Fetcher - Streams live chat messages from YouTube videos
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// YouTube video ID to fetch comments from
+    #[arg(long, required = true)]
+    video_id: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get video ID from environment variable or command line argument
-    let video_id = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("VIDEO_ID").ok())
-        .unwrap_or_else(|| "test-video-1".to_string());
+    let args = Args::parse();
 
-    eprintln!("Using video ID: {}", video_id);
+    eprintln!("Using video ID: {}", args.video_id);
 
     // Get REST API address from environment variable or use default
     let rest_api_address =
@@ -18,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
 
     // Fetch the chat ID from the videos.list endpoint
-    let chat_id = fetch_chat_id(&rest_api_address, &video_id).await?;
+    let chat_id = fetch_chat_id(&rest_api_address, &args.video_id).await?;
 
     eprintln!("Got chat ID: {}", chat_id);
 
