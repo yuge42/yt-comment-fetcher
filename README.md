@@ -14,14 +14,19 @@ cd ..
 
 This creates a private Certificate Authority (CA) and server certificates for secure communication. See [certs/README.md](certs/README.md) for more details.
 
-### Running the Application
+### Running with Docker (Recommended)
 
-Start the mock server and run the application with a video ID:
+The easiest way to run the application is using Docker Compose, which handles all dependencies and certificate trust automatically.
 
-```bash
-docker compose up -d
-CA_CERT_PATH=certs/ca-cert.pem cargo run -- --video-id test-video-1
-```
+1. **Start the mock server**:
+   ```bash
+   docker compose up -d yt-api-mock
+   ```
+
+2. **Run the fetcher**:
+   ```bash
+   docker compose run --rm fetcher --video-id test-video-1
+   ```
 
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
@@ -29,7 +34,32 @@ The application will:
 
 Press Ctrl+C to stop.
 
-**Note:** The `CA_CERT_PATH` environment variable must be set to trust the development CA certificate when connecting to the TLS-enabled mock server.
+**Cleanup**:
+```bash
+docker compose down
+```
+
+### Running without Docker (Development)
+
+To run the application directly with Cargo, you need to trust the CA certificate at the system level first:
+
+**Linux (Debian/Ubuntu)**:
+```bash
+sudo cp certs/ca-cert.pem /usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
+sudo update-ca-certificates
+```
+
+**macOS**:
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/ca-cert.pem
+```
+
+Then start the mock server and run the application:
+
+```bash
+docker compose up -d yt-api-mock
+cargo run -- --video-id test-video-1
+```
 
 ## Development
 

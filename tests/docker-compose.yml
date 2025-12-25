@@ -30,7 +30,6 @@ services:
       - SERVER_ADDRESS=https://yt-api-mock:50051
       - REST_API_ADDRESS=https://yt-api-mock:8080
       - FETCHER_BINARY=/fetcher/yt-comment-fetcher
-      - CA_CERT_PATH=/usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
     networks:
       - yt-test
     volumes:
