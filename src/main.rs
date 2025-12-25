@@ -3,7 +3,26 @@ use yt_grpc_client::YouTubeClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get server address from environment variable or use default
+    // Get video ID from environment variable or command line argument
+    let video_id = std::env::args()
+        .nth(1)
+        .or_else(|| std::env::var("VIDEO_ID").ok())
+        .unwrap_or_else(|| "test-video-1".to_string());
+
+    eprintln!("Using video ID: {}", video_id);
+
+    // Get REST API address from environment variable or use default
+    let rest_api_address =
+        std::env::var("REST_API_ADDRESS").unwrap_or_else(|_| "http://localhost:8080".to_string());
+
+    eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
+
+    // Fetch the chat ID from the videos.list endpoint
+    let chat_id = fetch_chat_id(&rest_api_address, &video_id).await?;
+
+    eprintln!("Got chat ID: {}", chat_id);
+
+    // Get gRPC server address from environment variable or use default
     let server_address =
         std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "localhost:50051".to_string());
     let server_url =
@@ -13,11 +32,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("http://{}", server_address)
         };
 
-    // Connect to the server
+    eprintln!("Connecting to gRPC server at: {}", server_url);
+
+    // Connect to the gRPC server
     let mut client = YouTubeClient::connect(server_url).await?;
 
-    // Stream comments
-    let mut stream = client.stream_comments(None).await?;
+    // Stream comments using the retrieved chat ID
+    let mut stream = client.stream_comments(Some(chat_id)).await?;
 
     // Process each message in the stream
     while let Some(response) = stream.next().await {
@@ -38,4 +59,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Connection ended");
 
     Ok(())
+}
+
+async fn fetch_chat_id(
+    rest_api_address: &str,
+    video_id: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = format!(
+        "{}/youtube/v3/videos?part=liveStreamingDetails&id={}",
+        rest_api_address, video_id
+    );
+
+    let client = reqwest::Client::new();
+    let response = client.get(&url).send().await?;
+
+    if !response.status().is_success() {
+        return Err(format!("Failed to fetch video data: {}", response.status()).into());
+    }
+
+    let body: serde_json::Value = response.json().await?;
+
+    // Extract the activeLiveChatId from the response
+    let chat_id = body
+        .get("items")
+        .and_then(|items| items.get(0))
+        .and_then(|item| item.get("liveStreamingDetails"))
+        .and_then(|details| details.get("activeLiveChatId"))
+        .and_then(|id| id.as_str())
+        .ok_or("No active live chat ID found in video data")?;
+
+    Ok(chat_id.to_string())
 }
