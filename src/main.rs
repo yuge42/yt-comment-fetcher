@@ -88,22 +88,18 @@ async fn fetch_chat_id(
     let body: serde_json::Value = response.json().await?;
 
     // Extract the activeLiveChatId from the response
-    let items = body
-        .get("items")
-        .ok_or("Response missing 'items' field")?;
-    
-    let items_array = items
-        .as_array()
-        .ok_or("'items' field is not an array")?;
-    
+    let items = body.get("items").ok_or("Response missing 'items' field")?;
+
+    let items_array = items.as_array().ok_or("'items' field is not an array")?;
+
     let first_item = items_array
         .get(0)
         .ok_or("No video found with the given ID")?;
-    
+
     let live_streaming_details = first_item
         .get("liveStreamingDetails")
         .ok_or("Video does not have live streaming details (not a live video)")?;
-    
+
     let chat_id = live_streaming_details
         .get("activeLiveChatId")
         .and_then(|id| id.as_str())
