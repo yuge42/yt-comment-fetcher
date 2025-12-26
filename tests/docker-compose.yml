@@ -6,6 +6,10 @@ services:
       - "8080:8080"
     environment:
       - LOG_LEVEL=info
+      - TLS_CERT_PATH=/certs/server-cert.pem
+      - TLS_KEY_PATH=/certs/server-key.pem
+    volumes:
+      - ../certs:/certs:ro
     healthcheck:
       test: ["CMD", "sh", "-c", "nc -z localhost 50051 && nc -z localhost 8080"]
       interval: 2s
@@ -23,8 +27,8 @@ services:
       yt-api-mock:
         condition: service_healthy
     environment:
-      - SERVER_ADDRESS=yt-api-mock:50051
-      - REST_API_ADDRESS=http://yt-api-mock:8080
+      - SERVER_ADDRESS=https://yt-api-mock:50051
+      - REST_API_ADDRESS=https://yt-api-mock:8080
       - FETCHER_BINARY=/fetcher/yt-comment-fetcher
     networks:
       - yt-test

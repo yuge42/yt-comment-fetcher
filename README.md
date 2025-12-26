@@ -1,13 +1,39 @@
 # YouTube Live Comment Fetcher
 
+> **Note**: This documentation is for developers. User-facing documentation will be added in the future.
+
 ## Usage
 
-Start the mock server and run the application with a video ID:
+### First-time Setup
+
+Generate development TLS certificates (required for local development):
 
 ```bash
-docker compose up -d
-cargo run -- --video-id test-video-1
+cd certs
+./generate-certs.sh
+cd ..
 ```
+
+This creates a private Certificate Authority (CA) and server certificates for secure communication. See [certs/README.md](certs/README.md) for more details.
+
+### Running with Docker (Recommended)
+
+The easiest way to run the application is using Docker, which handles certificate trust automatically without needing to install the CA on your host system.
+
+1. **Start the mock server**:
+   ```bash
+   docker compose up -d
+   ```
+
+2. **Build the fetcher image**:
+   ```bash
+   docker build -t yt-comment-fetcher .
+   ```
+
+3. **Run the fetcher**:
+   ```bash
+   docker run --rm --network host yt-comment-fetcher --video-id test-video-1
+   ```
 
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
@@ -15,24 +41,66 @@ The application will:
 
 Press Ctrl+C to stop.
 
+**Cleanup**:
+```bash
+docker compose down
+```
+
+### Running without Docker (Development)
+
+To run the application directly with Cargo, you need to trust the CA certificate at the system level first:
+
+**Linux (Debian/Ubuntu)**:
+```bash
+sudo cp certs/ca-cert.pem /usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
+sudo update-ca-certificates
+```
+
+**macOS**:
+```bash
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/ca-cert.pem
+```
+
+Then start the mock server and run the application:
+
+```bash
+docker compose up -d
+cargo run -- --video-id test-video-1
+```
+
 ## Development
 
 ### YouTube API Mock Server
 
-For local development, you can use the YouTube API Mock server:
+For local development, you can use the YouTube API Mock server with TLS enabled:
 
 ```bash
 docker compose up
 ```
 
 This will start the mock server with:
-- **gRPC server** (live chat) at `localhost:50051`
-- **REST server** (videos API) at `localhost:8080`
+- **gRPC server** (live chat) at `https://localhost:50051` (TLS enabled)
+- **REST server** (videos API) at `https://localhost:8080` (TLS enabled)
 
 To stop the server:
 
 ```bash
 docker compose down
+```
+
+### TLS Certificate Setup
+
+The mock server uses TLS for all connections. Development certificates are stored in the `certs/` directory and are git-ignored for security.
+
+To generate certificates:
+```bash
+cd certs && ./generate-certs.sh
+```
+
+The application is configured to use HTTPS/TLS by default. To use insecure connections (not recommended), set environment variables:
+```bash
+export SERVER_ADDRESS=http://localhost:50051
+export REST_API_ADDRESS=http://localhost:8080
 ```
 
 ### Verifying the Mock Server
@@ -42,19 +110,19 @@ You can verify the server is running using `grpcurl` for gRPC endpoints and `cur
 **Get video with Live Chat ID (REST):**
 
 ```bash
-curl "http://localhost:8080/youtube/v3/videos?part=liveStreamingDetails&id=test-video-1"
+curl --cacert certs/ca-cert.pem "https://localhost:8080/youtube/v3/videos?part=liveStreamingDetails&id=test-video-1"
 ```
 
 **List available gRPC services:**
 
 ```bash
-grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 list
+grpcurl -cacert certs/ca-cert.pem -import-path ./proto -proto stream_list.proto localhost:50051 list
 ```
 
 **Stream chat messages (gRPC):**
 
 ```bash
-grpcurl -plaintext -import-path ./proto -proto stream_list.proto localhost:50051 youtube.api.v3.V3DataLiveChatMessageService/StreamList
+grpcurl -cacert certs/ca-cert.pem -import-path ./proto -proto stream_list.proto localhost:50051 youtube.api.v3.V3DataLiveChatMessageService/StreamList
 ```
 
 ## License

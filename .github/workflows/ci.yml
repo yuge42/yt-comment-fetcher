@@ -58,6 +58,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Generate TLS certificates
+        run: |
+          cd certs
+          ./generate-certs.sh
+
       - name: Run E2E tests
         run: |
           cd tests
