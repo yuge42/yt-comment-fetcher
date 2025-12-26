@@ -34,6 +34,11 @@ Press Ctrl+C to stop.
 
 The `viewer.sh` script formats JSON output into a readable colored format. It uses `jq` to extract the author name and message text.
 
+**Requirements:** The viewer script requires `jq` to be installed. Install it with:
+- Ubuntu/Debian: `sudo apt-get install jq`
+- macOS: `brew install jq`
+- Or see: https://jqlang.github.io/jq/download/
+
 **Option 1: Stream and view in real-time while saving to file**
 
 ```bash
