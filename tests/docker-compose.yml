@@ -8,6 +8,7 @@ services:
       - LOG_LEVEL=info
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
+      - REQUIRE_AUTH=true
     volumes:
       - ../certs:/certs:ro
     healthcheck:
@@ -30,11 +31,13 @@ services:
       - SERVER_ADDRESS=https://yt-api-mock:50051
       - REST_API_ADDRESS=https://yt-api-mock:8080
       - FETCHER_BINARY=/fetcher/yt-comment-fetcher
+      - API_KEY_PATH=/tests/test-data/api-key.txt
     networks:
       - yt-test
     volumes:
       - ./reports:/tests/reports
       - ./logs:/tests/logs
+      - ./test-data:/tests/test-data:ro
 
 networks:
   yt-test:

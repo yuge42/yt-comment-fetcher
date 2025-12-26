@@ -35,6 +35,12 @@ The easiest way to run the application is using Docker, which handles certificat
    docker run --rm --network host yt-comment-fetcher --video-id test-video-1
    ```
 
+   If the server requires authentication, provide an API key:
+   ```bash
+   echo "your-api-key" > api-key.txt
+   docker run --rm --network host -v $(pwd)/api-key.txt:/api-key.txt yt-comment-fetcher --video-id test-video-1 --api-key-path /api-key.txt
+   ```
+
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
 2. Connect to the gRPC server and stream comments to stdout as JSON
@@ -66,6 +72,13 @@ Then start the mock server and run the application:
 ```bash
 docker compose up -d
 cargo run -- --video-id test-video-1
+```
+
+If the server requires authentication, provide an API key:
+
+```bash
+echo "your-api-key" > api-key.txt
+cargo run -- --video-id test-video-1 --api-key-path api-key.txt
 ```
 
 ## Development
@@ -102,6 +115,24 @@ The application is configured to use HTTPS/TLS by default. To use insecure conne
 export SERVER_ADDRESS=http://localhost:50051
 export REST_API_ADDRESS=http://localhost:8080
 ```
+
+### Authentication
+
+The fetcher supports API key authentication for servers that require it:
+
+```bash
+# Create an API key file
+echo "your-api-key-here" > api-key.txt
+
+# Run with API key
+cargo run -- --video-id test-video-1 --api-key-path api-key.txt
+```
+
+The API key is:
+- Sent as a `key` query parameter for REST API requests
+- Sent as `x-goog-api-key` metadata for gRPC streaming requests
+
+This matches the authentication pattern used by the real YouTube Data API.
 
 ### Verifying the Mock Server
 
