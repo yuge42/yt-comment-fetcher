@@ -337,6 +337,13 @@ step('Start the fetcher application with invalid video ID <videoId>', async func
     
     const args = ['--video-id', videoId];
     
+    // Add API key path if available (needed when auth is enabled)
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
     const fetcherProcess = spawn(binaryPath, args, {
       env: env
     });
