@@ -31,14 +31,28 @@ The easiest way to run the application is using Docker, which handles certificat
    ```
 
 3. **Run the fetcher**:
+
+   **For local development/testing with the mock server**:
    ```bash
-   docker run --rm --network host yt-comment-fetcher --video-id test-video-1
+   docker run --rm --network host \
+     -e SERVER_ADDRESS=https://localhost:50051 \
+     -e REST_API_ADDRESS=https://localhost:8080 \
+     yt-comment-fetcher --video-id test-video-1
+   ```
+
+   **For production use with official YouTube API**:
+   ```bash
+   docker run --rm yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path /path/to/api-key.txt
    ```
 
    If the server requires authentication, provide an API key:
    ```bash
    echo "your-api-key" > api-key.txt
-   docker run --rm --network host -v $(pwd)/api-key.txt:/api-key.txt yt-comment-fetcher --video-id test-video-1 --api-key-path /api-key.txt
+   docker run --rm --network host \
+     -e SERVER_ADDRESS=https://localhost:50051 \
+     -e REST_API_ADDRESS=https://localhost:8080 \
+     -v $(pwd)/api-key.txt:/api-key.txt \
+     yt-comment-fetcher --video-id test-video-1 --api-key-path /api-key.txt
    ```
 
 The application will:
@@ -67,10 +81,12 @@ sudo update-ca-certificates
 sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/ca-cert.pem
 ```
 
-Then start the mock server and run the application:
+Then start the mock server and run the application with environment variables to point to the local mock server:
 
 ```bash
 docker compose up -d
+export SERVER_ADDRESS=https://localhost:50051
+export REST_API_ADDRESS=https://localhost:8080
 cargo run -- --video-id test-video-1
 ```
 
@@ -78,10 +94,24 @@ If the server requires authentication, provide an API key:
 
 ```bash
 echo "your-api-key" > api-key.txt
+export SERVER_ADDRESS=https://localhost:50051
+export REST_API_ADDRESS=https://localhost:8080
 cargo run -- --video-id test-video-1 --api-key-path api-key.txt
 ```
 
 ## Development
+
+### Server Address Configuration
+
+The application defaults to the **official YouTube API endpoints**:
+- **REST API** (videos.list): `https://www.googleapis.com`
+- **gRPC API** (live chat streaming): `https://youtube.googleapis.com`
+
+For local development and testing with the mock server, override these defaults using environment variables:
+```bash
+export SERVER_ADDRESS=https://localhost:50051
+export REST_API_ADDRESS=https://localhost:8080
+```
 
 ### YouTube API Mock Server
 
@@ -110,11 +140,7 @@ To generate certificates:
 cd certs && ./generate-certs.sh
 ```
 
-The application is configured to use HTTPS/TLS by default. To use insecure connections (not recommended), set environment variables:
-```bash
-export SERVER_ADDRESS=http://localhost:50051
-export REST_API_ADDRESS=http://localhost:8080
-```
+The application is configured to use HTTPS/TLS by default when connecting to both the official YouTube API and the local mock server.
 
 ### Authentication
 
