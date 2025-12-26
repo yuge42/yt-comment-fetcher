@@ -34,8 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Get REST API address from environment variable or use default
-    let rest_api_address =
-        std::env::var("REST_API_ADDRESS").unwrap_or_else(|_| "https://localhost:8080".to_string());
+    let rest_api_address = std::env::var("REST_API_ADDRESS")
+        .unwrap_or_else(|_| "https://www.googleapis.com".to_string());
 
     eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
 
@@ -46,8 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get gRPC server address from environment variable or use default
     // Note: For TLS-enabled gRPC connections, tonic requires https:// prefix
-    let server_address =
-        std::env::var("SERVER_ADDRESS").unwrap_or_else(|_| "https://localhost:50051".to_string());
+    let server_address = std::env::var("SERVER_ADDRESS")
+        .unwrap_or_else(|_| "https://youtube.googleapis.com".to_string());
     let server_url =
         if server_address.starts_with("http://") || server_address.starts_with("https://") {
             server_address
