@@ -8,8 +8,8 @@ pub mod youtube {
 
 pub use youtube::api::v3::*;
 
-use tonic::transport::Channel;
 use tonic::metadata::AsciiMetadataValue;
+use tonic::transport::Channel;
 
 pub struct YouTubeClient {
     client: v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient<Channel>,
@@ -17,7 +17,10 @@ pub struct YouTubeClient {
 }
 
 impl YouTubeClient {
-    pub async fn connect(addr: String, api_key: Option<String>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn connect(
+        addr: String,
+        api_key: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let client =
             v3_data_live_chat_message_service_client::V3DataLiveChatMessageServiceClient::connect(
                 addr,
@@ -42,7 +45,9 @@ impl YouTubeClient {
         // Add API key to metadata if provided
         if let Some(api_key) = &self.api_key {
             let metadata_value = AsciiMetadataValue::try_from(api_key.as_str())?;
-            request.metadata_mut().insert("x-goog-api-key", metadata_value);
+            request
+                .metadata_mut()
+                .insert("x-goog-api-key", metadata_value);
         }
 
         let response = self.client.stream_list(request).await?;
