@@ -56,7 +56,8 @@ TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
 ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt >> $TARGET_FILE
 
 # Terminal 2 (or add & to previous command): View comments in real-time
-stdbuf -oL tail -F $TARGET_FILE \
+latest=$(ls -t "$HOME/yt-comments/"*.ndjson | head -n 1)
+stdbuf -oL tail -F $latest \
 | stdbuf -oL ./viewer.sh
 ```
 
