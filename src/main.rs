@@ -9,6 +9,10 @@ struct Args {
     /// YouTube video ID to fetch comments from
     #[arg(long, required = true)]
     video_id: String,
+
+    /// Path to file containing the API key for authentication
+    #[arg(long)]
+    api_key_path: Option<String>,
 }
 
 #[tokio::main]
@@ -17,6 +21,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Using video ID: {}", args.video_id);
 
+    // Read API key from file if provided
+    let api_key = if let Some(api_key_path) = &args.api_key_path {
+        eprintln!("Reading API key from: {}", api_key_path);
+        let key = std::fs::read_to_string(api_key_path)
+            .map_err(|e| format!("Failed to read API key file '{}': {}", api_key_path, e))?
+            .trim()
+            .to_string();
+        Some(key)
+    } else {
+        None
+    };
+
     // Get REST API address from environment variable or use default
     let rest_api_address =
         std::env::var("REST_API_ADDRESS").unwrap_or_else(|_| "https://localhost:8080".to_string());
@@ -24,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
 
     // Fetch the chat ID from the videos.list endpoint
-    let chat_id = fetch_chat_id(&rest_api_address, &args.video_id).await?;
+    let chat_id = fetch_chat_id(&rest_api_address, &args.video_id, api_key.as_deref()).await?;
 
     eprintln!("Got chat ID: {}", chat_id);
 
@@ -43,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Connecting to gRPC server at: {}", server_url);
 
     // Connect to the gRPC server
-    let mut client = YouTubeClient::connect(server_url).await?;
+    let mut client = YouTubeClient::connect(server_url, api_key.clone()).await?;
 
     // Stream comments using the retrieved chat ID
     let mut stream = client.stream_comments(Some(chat_id)).await?;
@@ -72,11 +88,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn fetch_chat_id(
     rest_api_address: &str,
     video_id: &str,
+    api_key: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = format!(
+    let mut url = format!(
         "{}/youtube/v3/videos?part=liveStreamingDetails&id={}",
         rest_api_address, video_id
     );
+
+    // Add API key as query parameter if provided
+    if let Some(key) = api_key {
+        url.push_str(&format!("&key={}", key));
+    }
 
     let client = reqwest::Client::new();
     let response = client.get(&url).send().await?;

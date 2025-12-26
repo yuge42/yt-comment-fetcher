@@ -5,6 +5,7 @@ This specification tests error handling in the YouTube Comment Fetcher applicati
 **Prerequisites**: The mock server must be running before executing this test.
 
 * Server address from environment variable "SERVER_ADDRESS" or default "localhost:50051"
+* API key path from environment variable "API_KEY_PATH"
 
 ## Test fetcher requires video ID argument
 

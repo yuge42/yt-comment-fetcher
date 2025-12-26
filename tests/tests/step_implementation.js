@@ -41,11 +41,20 @@ function getServerAddress() {
   return getStore().get('serverAddress');
 }
 
+function setApiKeyPath(path) {
+  getStore().put('apiKeyPath', path);
+}
+
+function getApiKeyPath() {
+  return getStore().get('apiKeyPath');
+}
+
 // Initialize scenario store before each scenario
 beforeScenario(async function() {
   setReceivedLines([]);
   setFetcherProcess(null);
   setServerAddress(null);
+  setApiKeyPath(null);
 });
 
 // Cleanup after each scenario
@@ -68,6 +77,17 @@ step('Server address from environment variable <envVar> or default <defaultAddre
   console.log(`Server address set to: ${serverAddress}`);
 });
 
+// Store API key path from environment
+step('API key path from environment variable <envVar>', async function (envVar) {
+  const apiKeyPath = process.env[envVar];
+  if (apiKeyPath) {
+    setApiKeyPath(apiKeyPath);
+    console.log(`API key path set to: ${apiKeyPath}`);
+  } else {
+    console.log(`Environment variable ${envVar} not set, no API key will be used`);
+  }
+});
+
 // Start the fetcher application
 step('Start the fetcher application', async function () {
   return new Promise((resolve, reject) => {
@@ -88,6 +108,13 @@ step('Start the fetcher application', async function () {
     
     // Pass the video ID as named argument
     const args = ['--video-id', 'test-video-1'];
+    
+    // Add API key path if available
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
     
     const fetcherProcess = spawn(binaryPath, args, {
       env: env
@@ -377,4 +404,75 @@ step('Verify fetcher exits with error about video not found', async function () 
   );
   
   console.log(`Verified exit code ${exitCode} and error message about video not found`);
+});
+
+// Start the fetcher application without API key
+step('Start the fetcher application without API key', async function () {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher without API key from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // Pass the video ID but NOT the API key
+    const args = ['--video-id', 'test-video-1'];
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let errorOutput = '';
+
+    fetcherProcess.stdout.on('data', (data) => {
+      console.log(`Fetcher stdout: ${data}`);
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      errorOutput += output;
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+      getStore().put('errorOutput', errorOutput);
+      resolve();
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+    
+    // Give it time to start and fail
+    setTimeout(resolve, 3000);
+  });
+});
+
+// Verify fetcher exits with authentication error
+step('Verify fetcher exits with authentication error', async function () {
+  const exitCode = getStore().get('exitCode');
+  const errorOutput = getStore().get('errorOutput');
+  
+  assert.ok(exitCode !== 0, `Expected non-zero exit code but got ${exitCode}`);
+  assert.ok(
+    errorOutput.includes('Unauthenticated') || 
+    errorOutput.includes('401') || 
+    errorOutput.includes('authentication') ||
+    errorOutput.includes('status 401') ||
+    errorOutput.toLowerCase().includes('unauthorized'),
+    `Expected error about authentication but got: ${errorOutput}`
+  );
+  
+  console.log(`Verified exit code ${exitCode} and error message about authentication`);
 });
