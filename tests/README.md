@@ -10,6 +10,19 @@ The tests verify that the YouTube Comment Fetcher application correctly:
 3. Outputs valid JSON to stdout
 4. Each JSON message contains the expected structure with author details
 
+## Prerequisites
+
+**Important**: Before running tests, you must generate TLS certificates:
+
+```bash
+# From the project root
+cd certs
+./generate-certs.sh
+cd ..
+```
+
+This creates the CA and server certificates required for the TLS-enabled mock server. Certificates are git-ignored and must be generated in each environment.
+
 ## Quick Start with Docker (Recommended)
 
 The easiest way to run tests without installing dependencies locally:

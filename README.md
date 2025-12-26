@@ -1,5 +1,7 @@
 # YouTube Live Comment Fetcher
 
+> **Note**: This documentation is for developers. User-facing documentation will be added in the future.
+
 ## Usage
 
 ### First-time Setup
