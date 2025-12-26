@@ -1,8 +1,38 @@
 # YouTube Live Comment Fetcher
 
-> **Note**: This documentation is for developers. User-facing documentation will be added in the future.
-
 ## Usage
+
+### Building the Application
+
+Build the release binary:
+
+```bash
+cargo build --release
+```
+
+The binary will be available at `target/release/yt-comment-fetcher`.
+
+### Running in Production
+
+The application connects to the official YouTube API by default. You need a YouTube Data API key to use it.
+
+```bash
+# Create an API key file
+echo "YOUR_API_KEY" > api-key.txt
+
+# Run the fetcher
+./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt
+```
+
+The application will:
+1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
+2. Connect to the gRPC server and stream comments to stdout as JSON
+
+Press Ctrl+C to stop.
+
+## Development Setup
+
+> **Note**: The following sections are for developers working on this project.
 
 ### First-time Setup
 
@@ -16,9 +46,9 @@ cd ..
 
 This creates a private Certificate Authority (CA) and server certificates for secure communication. See [certs/README.md](certs/README.md) for more details.
 
-### Running with Docker (Recommended)
+### Running with Docker (Development)
 
-The easiest way to run the application is using Docker, which handles certificate trust automatically without needing to install the CA on your host system.
+Docker is recommended for development as it handles certificate trust automatically.
 
 1. **Start the mock server**:
    ```bash
@@ -30,9 +60,7 @@ The easiest way to run the application is using Docker, which handles certificat
    docker build -t yt-comment-fetcher .
    ```
 
-3. **Run the fetcher**:
-
-   **For local development/testing with the mock server**:
+3. **Run with the mock server**:
    ```bash
    docker run --rm --network host \
      -e SERVER_ADDRESS=https://localhost:50051 \
@@ -40,64 +68,36 @@ The easiest way to run the application is using Docker, which handles certificat
      yt-comment-fetcher --video-id test-video-1
    ```
 
-   **For production use with official YouTube API**:
-   ```bash
-   docker run --rm yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path /path/to/api-key.txt
-   ```
-
-   If the server requires authentication, provide an API key:
-   ```bash
-   echo "your-api-key" > api-key.txt
-   docker run --rm --network host \
-     -e SERVER_ADDRESS=https://localhost:50051 \
-     -e REST_API_ADDRESS=https://localhost:8080 \
-     -v $(pwd)/api-key.txt:/api-key.txt \
-     yt-comment-fetcher --video-id test-video-1 --api-key-path /api-key.txt
-   ```
-
-The application will:
-1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
-2. Connect to the gRPC server and stream comments to stdout as JSON
-
-Press Ctrl+C to stop.
-
 **Cleanup**:
 ```bash
 docker compose down
 ```
 
-### Running without Docker (Development)
+### Running with Cargo (Development)
 
-To run the application directly with Cargo, you need to trust the CA certificate at the system level first:
+To run the application directly with Cargo against the mock server:
 
-**Linux (Debian/Ubuntu)**:
-```bash
-sudo cp certs/ca-cert.pem /usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
-sudo update-ca-certificates
-```
+1. Trust the CA certificate at the system level:
 
-**macOS**:
-```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/ca-cert.pem
-```
+   **Linux (Debian/Ubuntu)**:
+   ```bash
+   sudo cp certs/ca-cert.pem /usr/local/share/ca-certificates/yt-comment-fetcher-ca.crt
+   sudo update-ca-certificates
+   ```
 
-Then start the mock server and run the application with environment variables to point to the local mock server:
+   **macOS**:
+   ```bash
+   sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/ca-cert.pem
+   ```
 
-```bash
-docker compose up -d
-export SERVER_ADDRESS=https://localhost:50051
-export REST_API_ADDRESS=https://localhost:8080
-cargo run -- --video-id test-video-1
-```
+2. Start the mock server and run:
 
-If the server requires authentication, provide an API key:
-
-```bash
-echo "your-api-key" > api-key.txt
-export SERVER_ADDRESS=https://localhost:50051
-export REST_API_ADDRESS=https://localhost:8080
-cargo run -- --video-id test-video-1 --api-key-path api-key.txt
-```
+   ```bash
+   docker compose up -d
+   export SERVER_ADDRESS=https://localhost:50051
+   export REST_API_ADDRESS=https://localhost:8080
+   cargo run -- --video-id test-video-1
+   ```
 
 ## Development
 
