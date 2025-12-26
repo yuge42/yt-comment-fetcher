@@ -16,16 +16,21 @@ This creates a private Certificate Authority (CA) and server certificates for se
 
 ### Running with Docker (Recommended)
 
-The easiest way to run the application is using Docker Compose, which handles all dependencies and certificate trust automatically.
+The easiest way to run the application is using Docker, which handles certificate trust automatically without needing to install the CA on your host system.
 
 1. **Start the mock server**:
    ```bash
-   docker compose up -d yt-api-mock
+   docker compose up -d
    ```
 
-2. **Run the fetcher**:
+2. **Build the fetcher image**:
    ```bash
-   docker compose run --rm fetcher --video-id test-video-1
+   docker build -t yt-comment-fetcher .
+   ```
+
+3. **Run the fetcher**:
+   ```bash
+   docker run --rm --network host yt-comment-fetcher --video-id test-video-1
    ```
 
 The application will:
@@ -57,7 +62,7 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 Then start the mock server and run the application:
 
 ```bash
-docker compose up -d yt-api-mock
+docker compose up -d
 cargo run -- --video-id test-video-1
 ```
 
