@@ -30,6 +30,31 @@ The application will:
 
 Press Ctrl+C to stop.
 
+### Viewing Comments with the Viewer Script
+
+The `viewer.sh` script formats JSON output into a readable colored format. It uses `jq` to extract the author name and message text.
+
+**Option 1: Stream and view in real-time while saving to file**
+
+```bash
+TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
+stdbuf -oL ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt \
+| tee $TARGET_FILE \
+| stdbuf -oL ./viewer.sh
+```
+
+**Option 2: Save to file and view separately**
+
+```bash
+# Terminal 1: Fetch and save comments
+TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
+./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt >> $TARGET_FILE
+
+# Terminal 2 (or add & to previous command): View comments in real-time
+stdbuf -oL tail -F $TARGET_FILE \
+| stdbuf -oL ./viewer.sh
+```
+
 ## Development Setup
 
 > **Note**: The following sections are for developers working on this project.
