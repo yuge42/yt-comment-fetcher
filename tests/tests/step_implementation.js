@@ -655,7 +655,7 @@ step('Verify fetcher logs reconnection attempt', async function () {
   
   assert.ok(
     stderrOutput.includes('reconnecting') || 
-    stderrOutput.includes('Waiting') && stderrOutput.includes('seconds'),
+    (stderrOutput.includes('Waiting') && stderrOutput.includes('seconds before reconnecting')),
     `Expected reconnection attempt in logs but got: ${stderrOutput}`
   );
   
@@ -704,7 +704,7 @@ step('Verify reconnect wait time is <seconds> seconds in logs', async function (
   
   assert.ok(
     stderrOutput.includes(`Reconnect wait time: ${seconds} seconds`) ||
-    stderrOutput.includes(`Waiting ${seconds} seconds`),
+    stderrOutput.includes(`Waiting ${seconds} seconds before reconnecting`),
     `Expected reconnect wait time of ${seconds} seconds in logs but got: ${stderrOutput}`
   );
   
