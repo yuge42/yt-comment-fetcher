@@ -27,9 +27,9 @@ echo "YOUR_API_KEY" > api-key.txt
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
 2. Connect to the gRPC server and stream comments to stdout as JSON
-3. Automatically reconnect if the connection is lost (default: wait 5 seconds between attempts)
+3. Automatically reconnect if the stream times out during message reception (default: wait 5 seconds between attempts)
 
-**Reconnection:** If the gRPC connection times out or is lost, the fetcher will automatically attempt to reconnect. You can configure the wait time between reconnection attempts:
+**Reconnection:** If the gRPC stream times out or is lost during message reception, the fetcher will automatically attempt to reconnect. Initial connection failures will cause the application to exit immediately (fail-fast behavior appropriate for CLI tools). You can configure the wait time between reconnection attempts:
 
 ```bash
 # Set reconnection wait time to 10 seconds
