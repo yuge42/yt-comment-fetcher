@@ -710,3 +710,96 @@ step('Verify reconnect wait time is <seconds> seconds in logs', async function (
   
   console.log(`Verified reconnect wait time of ${seconds} seconds in logs`);
 });
+
+// Start the fetcher application and expect failure
+step('Start the fetcher application and expect failure', async function () {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher expecting failure from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // Pass the video ID
+    const args = ['--video-id', 'test-video-1'];
+    
+    // Add API key path if available
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let errorOutput = '';
+    let stderrOutput = '';
+
+    fetcherProcess.stdout.on('data', (data) => {
+      console.log(`Fetcher stdout: ${data}`);
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      errorOutput += output;
+      stderrOutput += output;
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+      getStore().put('errorOutput', errorOutput);
+      getStore().put('stderrOutput', stderrOutput);
+      resolve();
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+    
+    // Give it time to start and fail
+    setTimeout(resolve, 5000);
+  });
+});
+
+// Verify fetcher exits with connection error
+step('Verify fetcher exits with connection error', async function () {
+  const exitCode = getStore().get('exitCode');
+  const errorOutput = getStore().get('errorOutput');
+  
+  assert.ok(exitCode !== 0, `Expected non-zero exit code but got ${exitCode}`);
+  assert.ok(
+    errorOutput.includes('Failed to connect') || 
+    errorOutput.includes('connection') ||
+    errorOutput.includes('Connection') ||
+    errorOutput.toLowerCase().includes('error'),
+    `Expected connection error but got: ${errorOutput}`
+  );
+  
+  console.log(`Verified exit code ${exitCode} and connection error message`);
+});
+
+// Verify fetcher does not log reconnection attempts
+step('Verify fetcher does not log reconnection attempts', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    !stderrOutput.includes('reconnecting') && 
+    !stderrOutput.includes('Waiting') || !stderrOutput.includes('seconds before reconnecting'),
+    `Expected no reconnection attempts but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher did not log reconnection attempts');
+});

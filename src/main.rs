@@ -61,57 +61,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
     eprintln!("Connecting to gRPC server at: {}", server_url);
+
+    // Connect to the gRPC server (fail fast if initial connection fails)
+    let mut client = YouTubeClient::connect(server_url.clone(), api_key.clone()).await?;
+
+    // Stream comments using the retrieved chat ID (fail fast if stream setup fails)
+    let mut stream = client.stream_comments(Some(chat_id.clone())).await?;
+
     eprintln!("Reconnect wait time: {} seconds", args.reconnect_wait_secs);
 
-    // Reconnection loop
+    // Process messages with reconnection on timeout/error
     loop {
-        // Connect to the gRPC server
-        let mut client = match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
-            Ok(client) => client,
-            Err(e) => {
-                eprintln!("Failed to connect to gRPC server: {}", e);
-                eprintln!("Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-                tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
-                continue;
+        match stream.next().await {
+            Some(Ok(message)) => {
+                // Print message as JSON (non-delimited)
+                let json = serde_json::to_string(&message)?;
+                println!("{}", json);
             }
-        };
-
-        // Stream comments using the retrieved chat ID
-        let mut stream = match client.stream_comments(Some(chat_id.clone())).await {
-            Ok(stream) => stream,
-            Err(e) => {
-                eprintln!("Failed to start stream: {}", e);
-                eprintln!("Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
+            Some(Err(e)) => {
+                // Stream error (timeout or connection issue during streaming)
+                eprintln!("Error receiving message: {}", e);
+                eprintln!("Connection lost. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
                 tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
-                continue;
-            }
-        };
-
-        // Process each message in the stream
-        let mut should_reconnect = false;
-        while let Some(response) = stream.next().await {
-            match response {
-                Ok(message) => {
-                    // Print message as JSON (non-delimited)
-                    let json = serde_json::to_string(&message)?;
-                    println!("{}", json);
-                }
-                Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
-                    should_reconnect = true;
-                    break;
+                
+                // Attempt to reconnect and restart stream
+                match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
+                    Ok(mut new_client) => {
+                        match new_client.stream_comments(Some(chat_id.clone())).await {
+                            Ok(new_stream) => {
+                                stream = new_stream;
+                                eprintln!("Reconnected successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to restart stream after reconnection: {}", e);
+                                // Keep trying in the next iteration
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reconnect: {}", e);
+                        // Keep trying in the next iteration
+                    }
                 }
             }
+            None => {
+                // Stream ended normally (no more messages)
+                eprintln!("Stream ended");
+                break;
+            }
         }
-
-        // If we exited the stream loop, reconnect after waiting
-        if should_reconnect {
-            eprintln!("Connection lost. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-        } else {
-            eprintln!("Stream ended normally. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-        }
-        tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
     }
+
+    Ok(())
 }
 
 async fn fetch_chat_id(
