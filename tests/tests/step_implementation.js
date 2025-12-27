@@ -770,7 +770,7 @@ step('Start the fetcher application and expect failure', async function () {
     });
     
     // Give it time to start and fail
-    setTimeout(resolve, 5000);
+    setTimeout(resolve, 3000);
   });
 });
 
@@ -797,7 +797,7 @@ step('Verify fetcher does not log reconnection attempts', async function () {
   
   assert.ok(
     !stderrOutput.includes('reconnecting') && 
-    !stderrOutput.includes('Waiting') || !stderrOutput.includes('seconds before reconnecting'),
+    (!stderrOutput.includes('Waiting') || !stderrOutput.includes('seconds before reconnecting')),
     `Expected no reconnection attempts but got: ${stderrOutput}`
   );
   
