@@ -483,3 +483,230 @@ step('Verify fetcher exits with authentication error', async function () {
   
   console.log(`Verified exit code ${exitCode} and error message about authentication`);
 });
+
+// Start the fetcher application with reconnect wait time
+step('Start the fetcher application with reconnect wait time <waitSeconds> seconds', async function (waitSeconds) {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher with reconnect wait time ${waitSeconds}s from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // Pass the video ID and reconnect wait time
+    const args = ['--video-id', 'test-video-1', '--reconnect-wait-secs', waitSeconds];
+    
+    // Add API key path if available
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let startupTimeout = setTimeout(() => {
+      console.log('Fetcher started (timeout reached)');
+      resolve();
+    }, STARTUP_TIMEOUT_MS);
+
+    // Store all stderr output for later verification
+    let stderrOutput = '';
+    getStore().put('stderrOutput', stderrOutput);
+
+    fetcherProcess.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
+      const receivedLines = getReceivedLines();
+      lines.forEach(line => {
+        console.log(`Fetcher stdout: ${line}`);
+        receivedLines.push(line);
+      });
+      setReceivedLines(receivedLines);
+      
+      // Once we start receiving data, resolve the startup promise
+      if (receivedLines.length > 0 && startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+        resolve();
+      }
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      stderrOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+      }
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+    });
+  });
+});
+
+// Store initial message count
+function setInitialMessageCount(count) {
+  getStore().put('initialMessageCount', count);
+}
+
+function getInitialMessageCount() {
+  return getStore().get('initialMessageCount') || 0;
+}
+
+// Store mock server process
+function setMockServerProcess(process) {
+  getStore().put('mockServerProcess', process);
+}
+
+function getMockServerProcess() {
+  return getStore().get('mockServerProcess');
+}
+
+// Stop the mock server
+step('Stop the mock server', async function () {
+  console.log('Stopping mock server using docker compose...');
+  
+  const { execSync } = require('child_process');
+  const projectRoot = path.join(__dirname, '../..');
+  
+  try {
+    execSync('docker compose stop yt-api-mock', {
+      cwd: projectRoot,
+      stdio: 'inherit'
+    });
+    console.log('Mock server stopped');
+  } catch (error) {
+    console.error(`Failed to stop mock server: ${error.message}`);
+    throw error;
+  }
+  
+  // Store the message count before stopping
+  const currentMessageCount = getReceivedLines().length;
+  setInitialMessageCount(currentMessageCount);
+  console.log(`Stored initial message count: ${currentMessageCount}`);
+});
+
+// Start the mock server
+step('Start the mock server', async function () {
+  console.log('Starting mock server using docker compose...');
+  
+  const { execSync } = require('child_process');
+  const projectRoot = path.join(__dirname, '../..');
+  
+  try {
+    execSync('docker compose start yt-api-mock', {
+      cwd: projectRoot,
+      stdio: 'inherit'
+    });
+    console.log('Mock server started');
+    
+    // Wait a bit for server to be fully ready
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  } catch (error) {
+    console.error(`Failed to start mock server: ${error.message}`);
+    throw error;
+  }
+});
+
+// Wait for a specific duration
+step('Wait <seconds> seconds for connection to drop', async function (seconds) {
+  const waitTime = parseInt(seconds, 10) * 1000;
+  console.log(`Waiting ${seconds} seconds...`);
+  await new Promise(resolve => setTimeout(resolve, waitTime));
+});
+
+// Verify fetcher logs connection error
+step('Verify fetcher logs connection error', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes('Error receiving message') || 
+    stderrOutput.includes('Connection lost') ||
+    stderrOutput.includes('Failed to connect') ||
+    stderrOutput.includes('Failed to start stream'),
+    `Expected connection error in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher logged connection error');
+});
+
+// Verify fetcher logs reconnection attempt
+step('Verify fetcher logs reconnection attempt', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes('reconnecting') || 
+    stderrOutput.includes('Waiting') && stderrOutput.includes('seconds'),
+    `Expected reconnection attempt in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher logged reconnection attempt');
+});
+
+// Wait for fetcher to reconnect and receive messages
+step('Wait for fetcher to reconnect and receive messages', async function () {
+  const initialCount = getInitialMessageCount();
+  console.log(`Waiting for new messages (initial count: ${initialCount})...`);
+  
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    const maxWaitTime = 15000; // 15 seconds to allow for reconnection
+    
+    const checkMessages = setInterval(() => {
+      elapsedTime += CHECK_INTERVAL_MS;
+      const currentLines = getReceivedLines();
+      
+      // Check if we received new messages after reconnection
+      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
+        clearInterval(checkMessages);
+        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
+        resolve();
+      }
+    }, CHECK_INTERVAL_MS);
+  });
+});
+
+// Verify received new JSON messages after reconnection
+step('Verify received new JSON messages after reconnection', async function () {
+  const initialCount = getInitialMessageCount();
+  const currentLines = getReceivedLines();
+  
+  assert.ok(
+    currentLines.length > initialCount,
+    `Expected more than ${initialCount} messages after reconnection but got ${currentLines.length}`
+  );
+  
+  console.log(`Verified received new messages after reconnection (initial: ${initialCount}, now: ${currentLines.length})`);
+});
+
+// Verify reconnect wait time is logged
+step('Verify reconnect wait time is <seconds> seconds in logs', async function (seconds) {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes(`Reconnect wait time: ${seconds} seconds`) ||
+    stderrOutput.includes(`Waiting ${seconds} seconds`),
+    `Expected reconnect wait time of ${seconds} seconds in logs but got: ${stderrOutput}`
+  );
+  
+  console.log(`Verified reconnect wait time of ${seconds} seconds in logs`);
+});
