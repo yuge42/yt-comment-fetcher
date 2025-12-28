@@ -19,6 +19,38 @@ struct Args {
     reconnect_wait_secs: u64,
 }
 
+/// Macro to handle reconnection logic (avoids code duplication)
+macro_rules! handle_reconnection {
+    ($reason:expr, $server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $reconnect_secs:expr, $stream:expr) => {{
+        eprintln!("{}", $reason);
+        
+        // Log pagination status
+        if let Some(ref token) = $page_token {
+            eprintln!("Will resume from page token: {}", token);
+        }
+        
+        tokio::time::sleep(tokio::time::Duration::from_secs($reconnect_secs)).await;
+        
+        // Attempt to reconnect and restart stream with pagination token
+        match YouTubeClient::connect($server_url.clone(), $api_key.clone()).await {
+            Ok(mut new_client) => {
+                match new_client.stream_comments(Some($chat_id.clone()), $page_token.clone()).await {
+                    Ok(new_stream) => {
+                        $stream = new_stream;
+                        eprintln!("Reconnected successfully");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to restart stream after reconnection: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to reconnect: {}", e);
+            }
+        }
+    }};
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -86,66 +118,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Some(Err(e)) => {
                 // Stream error (timeout or connection issue during streaming)
-                eprintln!("Error receiving message: {}", e);
-                eprintln!("Connection lost. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-                
-                // Log pagination status
-                if let Some(ref token) = next_page_token {
-                    eprintln!("Will resume from page token: {}", token);
-                }
-                
-                tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
-                
-                // Attempt to reconnect and restart stream with pagination token
-                match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
-                    Ok(mut new_client) => {
-                        match new_client.stream_comments(Some(chat_id.clone()), next_page_token.clone()).await {
-                            Ok(new_stream) => {
-                                stream = new_stream;
-                                eprintln!("Reconnected successfully");
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to restart stream after reconnection: {}", e);
-                                // Keep trying in the next iteration
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to reconnect: {}", e);
-                        // Keep trying in the next iteration
-                    }
-                }
+                let reason = format!("Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...", e, args.reconnect_wait_secs);
+                handle_reconnection!(reason, server_url, api_key, chat_id, next_page_token, args.reconnect_wait_secs, stream);
             }
             None => {
                 // Stream ended (timeout or connection closed)
-                eprintln!("Stream ended. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-                
-                // Log pagination status
-                if let Some(ref token) = next_page_token {
-                    eprintln!("Will resume from page token: {}", token);
-                }
-                
-                tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
-                
-                // Attempt to reconnect and restart stream with pagination token
-                match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
-                    Ok(mut new_client) => {
-                        match new_client.stream_comments(Some(chat_id.clone()), next_page_token.clone()).await {
-                            Ok(new_stream) => {
-                                stream = new_stream;
-                                eprintln!("Reconnected successfully");
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to restart stream after reconnection: {}", e);
-                                // Keep trying in the next iteration
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to reconnect: {}", e);
-                        // Keep trying in the next iteration
-                    }
-                }
+                let reason = format!("Stream ended. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
+                handle_reconnection!(reason, server_url, api_key, chat_id, next_page_token, args.reconnect_wait_secs, stream);
             }
         }
     }
