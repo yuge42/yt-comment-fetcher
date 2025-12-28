@@ -66,14 +66,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = YouTubeClient::connect(server_url.clone(), api_key.clone()).await?;
 
     // Stream comments using the retrieved chat ID (fail fast if stream setup fails)
-    let mut stream = client.stream_comments(Some(chat_id.clone())).await?;
+    let mut stream = client.stream_comments(Some(chat_id.clone()), None).await?;
 
     eprintln!("Reconnect wait time: {} seconds", args.reconnect_wait_secs);
+
+    // Track the next page token for pagination on reconnection
+    let mut next_page_token: Option<String> = None;
 
     // Process messages with reconnection on timeout/error
     loop {
         match stream.next().await {
             Some(Ok(message)) => {
+                // Update the page token for potential reconnection
+                if let Some(ref token) = message.next_page_token {
+                    next_page_token = Some(token.clone());
+                }
+                
                 // Print message as JSON (non-delimited)
                 let json = serde_json::to_string(&message)?;
                 println!("{}", json);
@@ -82,12 +90,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Stream error (timeout or connection issue during streaming)
                 eprintln!("Error receiving message: {}", e);
                 eprintln!("Connection lost. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
+                
+                // Log pagination status
+                if let Some(ref token) = next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+                
                 tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
                 
-                // Attempt to reconnect and restart stream
+                // Attempt to reconnect and restart stream with pagination token
                 match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
                     Ok(mut new_client) => {
-                        match new_client.stream_comments(Some(chat_id.clone())).await {
+                        match new_client.stream_comments(Some(chat_id.clone()), next_page_token.clone()).await {
                             Ok(new_stream) => {
                                 stream = new_stream;
                                 eprintln!("Reconnected successfully");
