@@ -16,6 +16,8 @@ Tags: reconnection, pagination
 * Verify received at least "5" JSON messages
 * Verify fetcher outputs valid JSON stream
 * Record the current message count
+* Wait for stream timeout to occur
+* Wait for fetcher to reconnect
 * Add new messages via mock control endpoint
 * Wait for fetcher to receive new messages
 * Verify fetcher received additional messages with correct pagination

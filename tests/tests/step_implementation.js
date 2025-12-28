@@ -817,6 +817,24 @@ step('Wait for fetcher to receive new messages', async function () {
   });
 });
 
+// Wait for stream timeout to occur
+step('Wait for stream timeout to occur', async function () {
+  // CHAT_STREAM_TIMEOUT is configured to 5 seconds, wait a bit longer to ensure timeout occurs
+  const timeoutWaitMs = 6000; // 6 seconds
+  console.log(`Waiting ${timeoutWaitMs}ms for stream timeout to occur...`);
+  await new Promise(resolve => setTimeout(resolve, timeoutWaitMs));
+  console.log('Timeout wait period completed');
+});
+
+// Wait for fetcher to reconnect
+step('Wait for fetcher to reconnect', async function () {
+  // Wait for the reconnect wait time plus some buffer
+  const reconnectWaitMs = 4000; // 4 seconds (3s reconnect wait + 1s buffer)
+  console.log(`Waiting ${reconnectWaitMs}ms for fetcher to reconnect...`);
+  await new Promise(resolve => setTimeout(resolve, reconnectWaitMs));
+  console.log('Reconnect wait period completed');
+});
+
 // Verify fetcher received additional messages with correct pagination
 step('Verify fetcher received additional messages with correct pagination', async function () {
   const initialCount = getInitialMessageCount();

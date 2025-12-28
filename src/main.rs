@@ -117,14 +117,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             None => {
-                // Stream ended normally (no more messages)
-                eprintln!("Stream ended");
-                break;
+                // Stream ended (timeout or connection closed)
+                eprintln!("Stream ended. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
+                
+                // Log pagination status
+                if let Some(ref token) = next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+                
+                tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
+                
+                // Attempt to reconnect and restart stream with pagination token
+                match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
+                    Ok(mut new_client) => {
+                        match new_client.stream_comments(Some(chat_id.clone()), next_page_token.clone()).await {
+                            Ok(new_stream) => {
+                                stream = new_stream;
+                                eprintln!("Reconnected successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to restart stream after reconnection: {}", e);
+                                // Keep trying in the next iteration
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reconnect: {}", e);
+                        // Keep trying in the next iteration
+                    }
+                }
             }
         }
     }
-
-    Ok(())
 }
 
 async fn fetch_chat_id(
