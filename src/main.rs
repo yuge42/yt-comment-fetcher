@@ -78,9 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match stream.next().await {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
-                if let Some(ref token) = message.next_page_token {
-                    next_page_token = Some(token.clone());
-                }
+                next_page_token = message.next_page_token.clone();
                 
                 // Print message as JSON (non-delimited)
                 let json = serde_json::to_string(&message)?;
