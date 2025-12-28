@@ -7,20 +7,17 @@ This specification tests the automatic reconnection feature of the YouTube Comme
 * Server address from environment variable "SERVER_ADDRESS" or default "localhost:50051"
 * API key path from environment variable "API_KEY_PATH"
 
-## Test fetcher starts successfully with reconnect configuration
+## Test fetcher starts successfully with reconnect configuration and pagination
+
+Tags: reconnection, pagination
 
 * Start the fetcher application with reconnect wait time "3" seconds
 * Wait for fetcher to connect and receive messages
 * Verify received at least "5" JSON messages
 * Verify fetcher outputs valid JSON stream
+* Record the current message count
+* Add new messages via mock control endpoint
+* Wait for fetcher to receive new messages
+* Verify fetcher received additional messages with correct pagination
 * Stop the fetcher application
-
-## Test fetcher fails fast on initial connection error
-
-* Stop the mock server
-* Start the fetcher application and expect failure
-* Wait for fetcher to attempt connection
-* Verify fetcher exits with connection error
-* Verify fetcher does not log reconnection attempts
-* Start the mock server
 

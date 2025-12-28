@@ -63,7 +63,7 @@ jobs:
           cd certs
           ./generate-certs.sh
 
-      - name: Run E2E tests
+      - name: Run E2E tests (with mock server)
         run: |
           cd tests
           docker compose up --build --abort-on-container-exit --exit-code-from tests
@@ -73,5 +73,56 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
+          path: tests/reports/
+          if-no-files-found: ignore
+
+  e2e-test-failfast:
+    name: E2E Fail-Fast Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Build fetcher binary
+        run: cargo build --verbose
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Gauge
+        run: |
+          curl -SsL https://downloads.gauge.org/stable | sh
+          gauge install js
+
+      - name: Install test dependencies
+        run: |
+          cd tests
+          npm install
+
+      - name: Run fail-fast tests (no mock server)
+        run: |
+          cd tests
+          export FETCHER_BINARY=../target/debug/yt-comment-fetcher
+          gauge run --tags failfast specs/
+
+      - name: Upload fail-fast test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failfast-test-reports
           path: tests/reports/
           if-no-files-found: ignore

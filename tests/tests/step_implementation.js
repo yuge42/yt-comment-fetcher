@@ -803,3 +803,110 @@ step('Verify fetcher does not log reconnection attempts', async function () {
   
   console.log('Verified fetcher did not log reconnection attempts');
 });
+
+// Record the current message count
+step('Record the current message count', async function () {
+  const currentCount = getReceivedLines().length;
+  setInitialMessageCount(currentCount);
+  console.log(`Recorded current message count: ${currentCount}`);
+});
+
+// Add new messages via mock control endpoint
+step('Add new messages via mock control endpoint', async function () {
+  console.log('Adding new messages via mock control endpoint...');
+  
+  const serverAddress = getServerAddress() || 'localhost:8081';
+  // Extract host and port, removing https:// if present
+  const controlAddress = serverAddress.replace(/^https?:\/\//, '').replace(':50051', ':8081').replace(':8080', ':8081');
+  
+  try {
+    const http = require('http');
+    const url = `http://${controlAddress}/control/add-messages?count=3`;
+    
+    console.log(`Calling control endpoint: ${url}`);
+    
+    await new Promise((resolve, reject) => {
+      http.get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          console.log(`Control endpoint response: ${data}`);
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Control endpoint returned status ${res.statusCode}: ${data}`));
+          }
+        });
+      }).on('error', (err) => {
+        reject(err);
+      });
+    });
+    
+    console.log('Successfully added new messages via control endpoint');
+  } catch (error) {
+    console.error(`Failed to add messages via control endpoint: ${error.message}`);
+    throw error;
+  }
+});
+
+// Wait for fetcher to receive new messages
+step('Wait for fetcher to receive new messages', async function () {
+  const initialCount = getInitialMessageCount();
+  console.log(`Waiting for new messages (initial count: ${initialCount})...`);
+  
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    const maxWaitTime = 10000; // 10 seconds
+    
+    const checkMessages = setInterval(() => {
+      elapsedTime += CHECK_INTERVAL_MS;
+      const currentLines = getReceivedLines();
+      
+      // Check if we received new messages
+      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
+        clearInterval(checkMessages);
+        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
+        resolve();
+      }
+    }, CHECK_INTERVAL_MS);
+  });
+});
+
+// Verify fetcher received additional messages with correct pagination
+step('Verify fetcher received additional messages with correct pagination', async function () {
+  const initialCount = getInitialMessageCount();
+  const currentLines = getReceivedLines();
+  
+  assert.ok(
+    currentLines.length > initialCount,
+    `Expected more than ${initialCount} messages after adding new ones but got ${currentLines.length}`
+  );
+  
+  console.log(`Verified received additional messages (initial: ${initialCount}, now: ${currentLines.length})`);
+  
+  // Parse messages to check for duplicates by ID
+  const messageIds = new Set();
+  let duplicateFound = false;
+  
+  currentLines.forEach((line, index) => {
+    try {
+      const response = JSON.parse(line);
+      if (response.items && Array.isArray(response.items)) {
+        response.items.forEach((item) => {
+          if (item.id) {
+            if (messageIds.has(item.id)) {
+              console.error(`Duplicate message ID found: ${item.id}`);
+              duplicateFound = true;
+            }
+            messageIds.add(item.id);
+          }
+        });
+      }
+    } catch (error) {
+      console.error(`Failed to parse line ${index}: ${error.message}`);
+    }
+  });
+  
+  assert.ok(!duplicateFound, 'Expected no duplicate message IDs (pagination should prevent duplicates)');
+  console.log(`Verified no duplicate message IDs across ${messageIds.size} unique messages`);
+});
