@@ -572,61 +572,6 @@ function getInitialMessageCount() {
   return getStore().get('initialMessageCount') || 0;
 }
 
-// Store mock server process
-function setMockServerProcess(process) {
-  getStore().put('mockServerProcess', process);
-}
-
-function getMockServerProcess() {
-  return getStore().get('mockServerProcess');
-}
-
-// Stop the mock server
-step('Stop the mock server', async function () {
-  console.log('Stopping mock server using docker compose...');
-  
-  const { execSync } = require('child_process');
-  const projectRoot = path.join(__dirname, '../..');
-  
-  try {
-    execSync('docker compose stop yt-api-mock', {
-      cwd: projectRoot,
-      stdio: 'inherit'
-    });
-    console.log('Mock server stopped');
-  } catch (error) {
-    console.error(`Failed to stop mock server: ${error.message}`);
-    throw error;
-  }
-  
-  // Store the message count before stopping
-  const currentMessageCount = getReceivedLines().length;
-  setInitialMessageCount(currentMessageCount);
-  console.log(`Stored initial message count: ${currentMessageCount}`);
-});
-
-// Start the mock server
-step('Start the mock server', async function () {
-  console.log('Starting mock server using docker compose...');
-  
-  const { execSync } = require('child_process');
-  const projectRoot = path.join(__dirname, '../..');
-  
-  try {
-    execSync('docker compose start yt-api-mock', {
-      cwd: projectRoot,
-      stdio: 'inherit'
-    });
-    console.log('Mock server started');
-    
-    // Wait a bit for server to be fully ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  } catch (error) {
-    console.error(`Failed to start mock server: ${error.message}`);
-    throw error;
-  }
-});
-
 // Wait for a specific duration
 step('Wait <seconds> seconds for connection to drop', async function (seconds) {
   const waitTime = parseInt(seconds, 10) * 1000;
