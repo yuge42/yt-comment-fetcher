@@ -8,5 +8,6 @@ services:
       - LOG_LEVEL=info
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
+      - STREAM_TIMEOUT=5
     volumes:
       - ./certs:/certs:ro
