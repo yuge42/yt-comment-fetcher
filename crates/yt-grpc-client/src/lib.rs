@@ -32,13 +32,14 @@ impl YouTubeClient {
     pub async fn stream_comments(
         &mut self,
         live_chat_id: Option<String>,
+        page_token: Option<String>,
     ) -> Result<tonic::Streaming<LiveChatMessageListResponse>, Box<dyn std::error::Error>> {
         let mut request = tonic::Request::new(LiveChatMessageListRequest {
             live_chat_id,
             hl: None,
             profile_image_size: None,
             max_results: None,
-            page_token: None,
+            page_token,
             part: vec!["snippet".to_string(), "authorDetails".to_string()],
         });
 

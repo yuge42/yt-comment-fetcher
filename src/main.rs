@@ -13,6 +13,10 @@ struct Args {
     /// Path to file containing the API key for authentication
     #[arg(long)]
     api_key_path: Option<String>,
+
+    /// Wait time in seconds before reconnecting after connection failure (default: 5)
+    #[arg(long, default_value = "5")]
+    reconnect_wait_secs: u64,
 }
 
 #[tokio::main]
@@ -58,29 +62,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connecting to gRPC server at: {}", server_url);
 
-    // Connect to the gRPC server
-    let mut client = YouTubeClient::connect(server_url, api_key.clone()).await?;
+    // Connect to the gRPC server (fail fast if initial connection fails)
+    let mut client = YouTubeClient::connect(server_url.clone(), api_key.clone()).await?;
 
-    // Stream comments using the retrieved chat ID
-    let mut stream = client.stream_comments(Some(chat_id)).await?;
+    // Stream comments using the retrieved chat ID (fail fast if stream setup fails)
+    let mut stream = client.stream_comments(Some(chat_id.clone()), None).await?;
 
-    // Process each message in the stream
-    while let Some(response) = stream.next().await {
-        match response {
-            Ok(message) => {
+    eprintln!("Reconnect wait time: {} seconds", args.reconnect_wait_secs);
+
+    // Track the next page token for pagination on reconnection
+    let mut next_page_token: Option<String> = None;
+
+    // Process messages with reconnection on timeout/error
+    loop {
+        match stream.next().await {
+            Some(Ok(message)) => {
+                // Update the page token for potential reconnection
+                next_page_token = message.next_page_token.clone();
+                
                 // Print message as JSON (non-delimited)
                 let json = serde_json::to_string(&message)?;
                 println!("{}", json);
             }
-            Err(e) => {
+            Some(Err(e)) => {
+                // Stream error (timeout or connection issue during streaming)
                 eprintln!("Error receiving message: {}", e);
+                eprintln!("Connection lost. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
+                
+                // Log pagination status
+                if let Some(ref token) = next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+                
+                tokio::time::sleep(tokio::time::Duration::from_secs(args.reconnect_wait_secs)).await;
+                
+                // Attempt to reconnect and restart stream with pagination token
+                match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
+                    Ok(mut new_client) => {
+                        match new_client.stream_comments(Some(chat_id.clone()), next_page_token.clone()).await {
+                            Ok(new_stream) => {
+                                stream = new_stream;
+                                eprintln!("Reconnected successfully");
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to restart stream after reconnection: {}", e);
+                                // Keep trying in the next iteration
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to reconnect: {}", e);
+                        // Keep trying in the next iteration
+                    }
+                }
+            }
+            None => {
+                // Stream ended normally (no more messages)
+                eprintln!("Stream ended");
                 break;
             }
         }
     }
-
-    // Print message when connection ends
-    eprintln!("Connection ended");
 
     Ok(())
 }
