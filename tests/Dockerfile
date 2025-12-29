@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gauge from official zip release with checksum verification
-RUN curl -L https://github.com/getgauge/gauge/releases/download/v${GAUGE_VERSION}/gauge-${GAUGE_VERSION}-linux.x86_64.zip -o /tmp/gauge.zip \
+RUN curl -fsSL --max-time 300 https://github.com/getgauge/gauge/releases/download/v${GAUGE_VERSION}/gauge-${GAUGE_VERSION}-linux.x86_64.zip -o /tmp/gauge.zip \
     && echo "${GAUGE_CHECKSUM}  /tmp/gauge.zip" | sha256sum -c - \
     && unzip /tmp/gauge.zip -d /tmp/gauge \
     && mv /tmp/gauge/gauge /usr/local/bin/gauge \
