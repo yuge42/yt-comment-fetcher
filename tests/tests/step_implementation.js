@@ -808,7 +808,8 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          rejectUnauthorized: false  // Accept self-signed certificates in test environment
         };
         
         const req = https.request(url, options, (res) => {
