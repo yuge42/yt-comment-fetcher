@@ -13,6 +13,10 @@ RUN cargo build --release
 
 FROM node:20-slim
 
+# Gauge version and checksum
+ARG GAUGE_VERSION=1.6.22
+ARG GAUGE_CHECKSUM=4488b8241e7760af70a0b098a71b47f4922130bcad94f20c85b3c86c2048b8fb
+
 # Install required packages and Gauge via zip installer for reliability
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -21,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Gauge from official zip release (v1.6.22)
-RUN curl -L https://github.com/getgauge/gauge/releases/download/v1.6.22/gauge-1.6.22-linux.x86_64.zip -o /tmp/gauge.zip \
+# Install Gauge from official zip release with checksum verification
+RUN curl -L https://github.com/getgauge/gauge/releases/download/v${GAUGE_VERSION}/gauge-${GAUGE_VERSION}-linux.x86_64.zip -o /tmp/gauge.zip \
+    && echo "${GAUGE_CHECKSUM}  /tmp/gauge.zip" | sha256sum -c - \
     && unzip /tmp/gauge.zip -d /tmp/gauge \
     && mv /tmp/gauge/gauge /usr/local/bin/gauge \
     && chmod +x /usr/local/bin/gauge \
