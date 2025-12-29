@@ -791,6 +791,7 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
     // Create multiple messages
     for (let i = 0; i < messagesToAdd; i++) {
       const messageData = {
+        id: `test-message-${Date.now()}-${i}`,
         liveChatId: liveChatId,
         authorChannelId: `test-author-${Date.now()}-${i}`,
         authorDisplayName: `Test User ${i}`,
