@@ -758,10 +758,19 @@ step('Record the current message count', async function () {
 
 // Add new messages via mock control endpoint
 step('Add new messages via mock control endpoint', async function () {
-  console.log('Adding new messages via mock control endpoint...');
+  await addMessagesViaControlEndpoint(3);
+});
+
+// Add specified number of new messages via mock control endpoint
+step('Add <count> new messages via mock control endpoint', async function (count) {
+  await addMessagesViaControlEndpoint(parseInt(count));
+});
+
+// Helper function to add messages via control endpoint
+async function addMessagesViaControlEndpoint(messagesToAdd) {
+  console.log(`Adding ${messagesToAdd} new messages via mock control endpoint...`);
   
   const controlAddress = process.env.CONTROL_API_ADDRESS || 'http://localhost:8080';
-  const messagesToAdd = 3;
   
   try {
     const https = controlAddress.startsWith('https:') ? require('https') : require('http');
@@ -837,7 +846,7 @@ step('Add new messages via mock control endpoint', async function () {
     console.error(`Failed to add messages via control endpoint: ${error.message}`);
     throw error;
   }
-});
+}
 
 // Wait for fetcher to receive new messages
 step('Wait for fetcher to receive new messages', async function () {
