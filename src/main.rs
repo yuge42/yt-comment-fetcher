@@ -54,6 +54,54 @@ macro_rules! handle_reconnection {
     }};
 }
 
+/// Macro to handle stream messages (avoids code duplication)
+macro_rules! handle_stream_message {
+    ($stream_result:expr, $next_page_token:ident, $server_url:ident, $api_key:ident, $chat_id:ident, $reconnect_wait_secs:expr, $stream:ident) => {
+        match $stream_result {
+            Some(Ok(message)) => {
+                // Update the page token for potential reconnection
+                $next_page_token = message.next_page_token.clone();
+
+                // Print message as JSON (non-delimited)
+                let json = serde_json::to_string(&message)?;
+                println!("{}", json);
+            }
+            Some(Err(e)) => {
+                // Stream error (timeout or connection issue during streaming)
+                let reason = format!(
+                    "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
+                    e, $reconnect_wait_secs
+                );
+                handle_reconnection!(
+                    reason,
+                    $server_url,
+                    $api_key,
+                    $chat_id,
+                    $next_page_token,
+                    $reconnect_wait_secs,
+                    $stream
+                );
+            }
+            None => {
+                // Stream ended (timeout or connection closed)
+                let reason = format!(
+                    "Stream ended. Waiting {} seconds before reconnecting...",
+                    $reconnect_wait_secs
+                );
+                handle_reconnection!(
+                    reason,
+                    $server_url,
+                    $api_key,
+                    $chat_id,
+                    $next_page_token,
+                    $reconnect_wait_secs,
+                    $stream
+                );
+            }
+        }
+    };
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -119,48 +167,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::select! {
                 // Handle incoming messages from the stream
                 stream_result = stream.next() => {
-                    match stream_result {
-                        Some(Ok(message)) => {
-                            // Update the page token for potential reconnection
-                            next_page_token = message.next_page_token.clone();
-
-                            // Print message as JSON (non-delimited)
-                            let json = serde_json::to_string(&message)?;
-                            println!("{}", json);
-                        }
-                        Some(Err(e)) => {
-                            // Stream error (timeout or connection issue during streaming)
-                            let reason = format!(
-                                "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
-                                e, args.reconnect_wait_secs
-                            );
-                            handle_reconnection!(
-                                reason,
-                                server_url,
-                                api_key,
-                                chat_id,
-                                next_page_token,
-                                args.reconnect_wait_secs,
-                                stream
-                            );
-                        }
-                        None => {
-                            // Stream ended (timeout or connection closed)
-                            let reason = format!(
-                                "Stream ended. Waiting {} seconds before reconnecting...",
-                                args.reconnect_wait_secs
-                            );
-                            handle_reconnection!(
-                                reason,
-                                server_url,
-                                api_key,
-                                chat_id,
-                                next_page_token,
-                                args.reconnect_wait_secs,
-                                stream
-                            );
-                        }
-                    }
+                    handle_stream_message!(
+                        stream_result,
+                        next_page_token,
+                        server_url,
+                        api_key,
+                        chat_id,
+                        args.reconnect_wait_secs,
+                        stream
+                    );
                 }
                 // Handle SIGINT (Ctrl+C)
                 _ = tokio::signal::ctrl_c() => {
@@ -183,48 +198,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::select! {
                 // Handle incoming messages from the stream
                 stream_result = stream.next() => {
-                    match stream_result {
-                        Some(Ok(message)) => {
-                            // Update the page token for potential reconnection
-                            next_page_token = message.next_page_token.clone();
-
-                            // Print message as JSON (non-delimited)
-                            let json = serde_json::to_string(&message)?;
-                            println!("{}", json);
-                        }
-                        Some(Err(e)) => {
-                            // Stream error (timeout or connection issue during streaming)
-                            let reason = format!(
-                                "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
-                                e, args.reconnect_wait_secs
-                            );
-                            handle_reconnection!(
-                                reason,
-                                server_url,
-                                api_key,
-                                chat_id,
-                                next_page_token,
-                                args.reconnect_wait_secs,
-                                stream
-                            );
-                        }
-                        None => {
-                            // Stream ended (timeout or connection closed)
-                            let reason = format!(
-                                "Stream ended. Waiting {} seconds before reconnecting...",
-                                args.reconnect_wait_secs
-                            );
-                            handle_reconnection!(
-                                reason,
-                                server_url,
-                                api_key,
-                                chat_id,
-                                next_page_token,
-                                args.reconnect_wait_secs,
-                                stream
-                            );
-                        }
-                    }
+                    handle_stream_message!(
+                        stream_result,
+                        next_page_token,
+                        server_url,
+                        api_key,
+                        chat_id,
+                        args.reconnect_wait_secs,
+                        stream
+                    );
                 }
                 // Handle SIGINT (Ctrl+C)
                 _ = tokio::signal::ctrl_c() => {
