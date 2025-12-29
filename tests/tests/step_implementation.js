@@ -756,11 +756,6 @@ step('Record the current message count', async function () {
   console.log(`Recorded current message count: ${currentCount}`);
 });
 
-// Add new messages via mock control endpoint
-step('Add new messages via mock control endpoint', async function () {
-  await addMessagesViaControlEndpoint(3);
-});
-
 // Add specified number of new messages via mock control endpoint
 step('Add <count> new messages via mock control endpoint', async function (count) {
   await addMessagesViaControlEndpoint(parseInt(count));

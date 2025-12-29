@@ -18,7 +18,7 @@ Tags: reconnection, pagination
 * Record the current message count
 * Wait for stream timeout to occur
 * Wait for fetcher to reconnect
-* Add new messages via mock control endpoint
+* Add "3" new messages via mock control endpoint
 * Wait for fetcher to receive new messages
 * Verify fetcher received additional messages with correct pagination
 * Stop the fetcher application
