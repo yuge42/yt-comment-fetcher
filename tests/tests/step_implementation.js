@@ -760,34 +760,79 @@ step('Record the current message count', async function () {
 step('Add new messages via mock control endpoint', async function () {
   console.log('Adding new messages via mock control endpoint...');
   
-  const serverAddress = getServerAddress() || 'localhost:8081';
-  // Extract host and port, removing https:// if present
-  const controlAddress = serverAddress.replace(/^https?:\/\//, '').replace(':50051', ':8081').replace(':8080', ':8081');
+  const controlAddress = process.env.CONTROL_API_ADDRESS || 'http://localhost:8080';
+  const messagesToAdd = 3;
   
   try {
-    const http = require('http');
-    const url = `http://${controlAddress}/control/add-messages?count=3`;
+    const https = controlAddress.startsWith('https:') ? require('https') : require('http');
+    const { URL } = require('url');
     
-    console.log(`Calling control endpoint: ${url}`);
+    // Get the current chat ID from the first message
+    const lines = getReceivedLines();
+    let liveChatId = 'test-chat-id'; // Default
     
-    await new Promise((resolve, reject) => {
-      http.get(url, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          console.log(`Control endpoint response: ${data}`);
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Control endpoint returned status ${res.statusCode}: ${data}`));
+    if (lines.length > 0) {
+      try {
+        const firstResponse = JSON.parse(lines[0]);
+        if (firstResponse.items && firstResponse.items.length > 0) {
+          liveChatId = firstResponse.items[0].snippet.liveChatId || liveChatId;
+        }
+      } catch (e) {
+        console.log('Could not parse first message for chat ID, using default');
+      }
+    }
+    
+    console.log(`Will add ${messagesToAdd} messages to chat ${liveChatId}`);
+    
+    // Create multiple messages
+    for (let i = 0; i < messagesToAdd; i++) {
+      const messageData = {
+        liveChatId: liveChatId,
+        authorChannelId: `test-author-${Date.now()}-${i}`,
+        authorDisplayName: `Test User ${i}`,
+        messageText: `Test message ${i} added via control endpoint`,
+        isVerified: false
+      };
+      
+      const url = new URL(`${controlAddress}/control/chat_messages`);
+      const postData = JSON.stringify(messageData);
+      
+      console.log(`Creating message ${i + 1}: POST ${url.href}`);
+      
+      await new Promise((resolve, reject) => {
+        const options = {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
           }
+        };
+        
+        const req = https.request(url, options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              console.log(`Message ${i + 1} created successfully`);
+              resolve();
+            } else {
+              console.error(`Failed to create message ${i + 1}: ${res.statusCode} - ${data}`);
+              reject(new Error(`Control endpoint returned status ${res.statusCode}: ${data}`));
+            }
+          });
         });
-      }).on('error', (err) => {
-        reject(err);
+        
+        req.on('error', (err) => {
+          console.error(`Request error for message ${i + 1}: ${err.message}`);
+          reject(err);
+        });
+        
+        req.write(postData);
+        req.end();
       });
-    });
+    }
     
-    console.log('Successfully added new messages via control endpoint');
+    console.log(`Successfully added ${messagesToAdd} new messages via control endpoint`);
   } catch (error) {
     console.error(`Failed to add messages via control endpoint: ${error.message}`);
     throw error;
