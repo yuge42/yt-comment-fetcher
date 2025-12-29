@@ -807,8 +807,7 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
         const options = {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(postData)
+            'Content-Type': 'application/json'
           }
         };
         
