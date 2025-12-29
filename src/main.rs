@@ -23,18 +23,21 @@ struct Args {
 macro_rules! handle_reconnection {
     ($reason:expr, $server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $reconnect_secs:expr, $stream:expr) => {{
         eprintln!("{}", $reason);
-        
+
         // Log pagination status
         if let Some(ref token) = $page_token {
             eprintln!("Will resume from page token: {}", token);
         }
-        
+
         tokio::time::sleep(tokio::time::Duration::from_secs($reconnect_secs)).await;
-        
+
         // Attempt to reconnect and restart stream with pagination token
         match YouTubeClient::connect($server_url.clone(), $api_key.clone()).await {
             Ok(mut new_client) => {
-                match new_client.stream_comments(Some($chat_id.clone()), $page_token.clone()).await {
+                match new_client
+                    .stream_comments(Some($chat_id.clone()), $page_token.clone())
+                    .await
+                {
                     Ok(new_stream) => {
                         $stream = new_stream;
                         eprintln!("Reconnected successfully");
@@ -111,20 +114,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
                 next_page_token = message.next_page_token.clone();
-                
+
                 // Print message as JSON (non-delimited)
                 let json = serde_json::to_string(&message)?;
                 println!("{}", json);
             }
             Some(Err(e)) => {
                 // Stream error (timeout or connection issue during streaming)
-                let reason = format!("Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...", e, args.reconnect_wait_secs);
-                handle_reconnection!(reason, server_url, api_key, chat_id, next_page_token, args.reconnect_wait_secs, stream);
+                let reason = format!(
+                    "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
+                    e, args.reconnect_wait_secs
+                );
+                handle_reconnection!(
+                    reason,
+                    server_url,
+                    api_key,
+                    chat_id,
+                    next_page_token,
+                    args.reconnect_wait_secs,
+                    stream
+                );
             }
             None => {
                 // Stream ended (timeout or connection closed)
-                let reason = format!("Stream ended. Waiting {} seconds before reconnecting...", args.reconnect_wait_secs);
-                handle_reconnection!(reason, server_url, api_key, chat_id, next_page_token, args.reconnect_wait_secs, stream);
+                let reason = format!(
+                    "Stream ended. Waiting {} seconds before reconnecting...",
+                    args.reconnect_wait_secs
+                );
+                handle_reconnection!(
+                    reason,
+                    server_url,
+                    api_key,
+                    chat_id,
+                    next_page_token,
+                    args.reconnect_wait_secs,
+                    stream
+                );
             }
         }
     }
