@@ -127,6 +127,9 @@ gauge run specs/
 
 - `specs/` - Contains Gauge specification files (`.spec`)
   - `fetcher_stream.spec` - Tests for the fetcher's JSON streaming output
+  - `fetcher_error_handling.spec` - Tests for error handling scenarios
+  - `fetcher_auth.spec` - Tests for API key authentication
+  - `fetcher_reconnection.spec` - Tests for automatic reconnection feature
 - `tests/` - Contains step implementation files
   - `step_implementation.js` - JavaScript implementation of test steps
 - `proto-gen/` - Generated gRPC client code (auto-generated, gitignored)
@@ -141,6 +144,9 @@ The E2E tests verify:
 5. Validating that each message contains items with author details
 6. Ensuring a minimum number of messages are received
 7. Proper cleanup and shutdown of the fetcher process
+8. Error handling for missing arguments and invalid video IDs
+9. API key authentication when required
+10. Automatic reconnection after connection loss with configurable wait time
 
 ## Test Reports
 

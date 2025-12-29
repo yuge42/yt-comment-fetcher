@@ -483,3 +483,443 @@ step('Verify fetcher exits with authentication error', async function () {
   
   console.log(`Verified exit code ${exitCode} and error message about authentication`);
 });
+
+// Start the fetcher application with reconnect wait time
+step('Start the fetcher application with reconnect wait time <waitSeconds> seconds', async function (waitSeconds) {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher with reconnect wait time ${waitSeconds}s from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // Pass the video ID and reconnect wait time
+    const args = ['--video-id', 'test-video-1', '--reconnect-wait-secs', waitSeconds];
+    
+    // Add API key path if available
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let startupTimeout = setTimeout(() => {
+      console.log('Fetcher started (timeout reached)');
+      resolve();
+    }, STARTUP_TIMEOUT_MS);
+
+    // Store all stderr output for later verification
+    let stderrOutput = '';
+    getStore().put('stderrOutput', stderrOutput);
+
+    fetcherProcess.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
+      const receivedLines = getReceivedLines();
+      lines.forEach(line => {
+        console.log(`Fetcher stdout: ${line}`);
+        receivedLines.push(line);
+      });
+      setReceivedLines(receivedLines);
+      
+      // Once we start receiving data, resolve the startup promise
+      if (receivedLines.length > 0 && startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+        resolve();
+      }
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      stderrOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+      }
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+    });
+  });
+});
+
+// Store initial message count
+function setInitialMessageCount(count) {
+  getStore().put('initialMessageCount', count);
+}
+
+function getInitialMessageCount() {
+  return getStore().get('initialMessageCount') || 0;
+}
+
+// Wait for a specific duration
+step('Wait <seconds> seconds for connection to drop', async function (seconds) {
+  const waitTime = parseInt(seconds, 10) * 1000;
+  console.log(`Waiting ${seconds} seconds...`);
+  await new Promise(resolve => setTimeout(resolve, waitTime));
+});
+
+// Verify fetcher logs connection error
+step('Verify fetcher logs connection error', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes('Error receiving message') || 
+    stderrOutput.includes('Connection lost') ||
+    stderrOutput.includes('Failed to connect') ||
+    stderrOutput.includes('Failed to start stream'),
+    `Expected connection error in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher logged connection error');
+});
+
+// Verify fetcher logs reconnection attempt
+step('Verify fetcher logs reconnection attempt', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes('reconnecting') || 
+    (stderrOutput.includes('Waiting') && stderrOutput.includes('seconds before reconnecting')),
+    `Expected reconnection attempt in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher logged reconnection attempt');
+});
+
+// Wait for fetcher to reconnect and receive messages
+step('Wait for fetcher to reconnect and receive messages', async function () {
+  const initialCount = getInitialMessageCount();
+  console.log(`Waiting for new messages (initial count: ${initialCount})...`);
+  
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    const maxWaitTime = 15000; // 15 seconds to allow for reconnection
+    
+    const checkMessages = setInterval(() => {
+      elapsedTime += CHECK_INTERVAL_MS;
+      const currentLines = getReceivedLines();
+      
+      // Check if we received new messages after reconnection
+      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
+        clearInterval(checkMessages);
+        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
+        resolve();
+      }
+    }, CHECK_INTERVAL_MS);
+  });
+});
+
+// Verify received new JSON messages after reconnection
+step('Verify received new JSON messages after reconnection', async function () {
+  const initialCount = getInitialMessageCount();
+  const currentLines = getReceivedLines();
+  
+  assert.ok(
+    currentLines.length > initialCount,
+    `Expected more than ${initialCount} messages after reconnection but got ${currentLines.length}`
+  );
+  
+  console.log(`Verified received new messages after reconnection (initial: ${initialCount}, now: ${currentLines.length})`);
+});
+
+// Verify reconnect wait time is logged
+step('Verify reconnect wait time is <seconds> seconds in logs', async function (seconds) {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes(`Reconnect wait time: ${seconds} seconds`) ||
+    stderrOutput.includes(`Waiting ${seconds} seconds before reconnecting`),
+    `Expected reconnect wait time of ${seconds} seconds in logs but got: ${stderrOutput}`
+  );
+  
+  console.log(`Verified reconnect wait time of ${seconds} seconds in logs`);
+});
+
+// Start the fetcher application and expect failure
+step('Start the fetcher application and expect failure', async function () {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    
+    console.log(`Starting fetcher expecting failure from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    // Pass the video ID
+    const args = ['--video-id', 'test-video-1'];
+    
+    // Add API key path if available
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    const fetcherProcess = spawn(binaryPath, args, {
+      env: env
+    });
+    
+    setFetcherProcess(fetcherProcess);
+
+    let errorOutput = '';
+    let stderrOutput = '';
+
+    fetcherProcess.stdout.on('data', (data) => {
+      console.log(`Fetcher stdout: ${data}`);
+    });
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      errorOutput += output;
+      stderrOutput += output;
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+      getStore().put('errorOutput', errorOutput);
+      getStore().put('stderrOutput', stderrOutput);
+      resolve();
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+    
+    // Give it time to start and fail
+    setTimeout(resolve, 3000);
+  });
+});
+
+// Verify fetcher exits with connection error
+step('Verify fetcher exits with connection error', async function () {
+  const exitCode = getStore().get('exitCode');
+  const errorOutput = getStore().get('errorOutput');
+  
+  assert.ok(exitCode !== 0, `Expected non-zero exit code but got ${exitCode}`);
+  assert.ok(
+    errorOutput.includes('Failed to connect') || 
+    errorOutput.includes('connection') ||
+    errorOutput.includes('Connection') ||
+    errorOutput.toLowerCase().includes('error'),
+    `Expected connection error but got: ${errorOutput}`
+  );
+  
+  console.log(`Verified exit code ${exitCode} and connection error message`);
+});
+
+// Verify fetcher does not log reconnection attempts
+step('Verify fetcher does not log reconnection attempts', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    !stderrOutput.includes('reconnecting') && 
+    (!stderrOutput.includes('Waiting') || !stderrOutput.includes('seconds before reconnecting')),
+    `Expected no reconnection attempts but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher did not log reconnection attempts');
+});
+
+// Record the current message count
+step('Record the current message count', async function () {
+  const currentCount = getReceivedLines().length;
+  setInitialMessageCount(currentCount);
+  console.log(`Recorded current message count: ${currentCount}`);
+});
+
+// Add specified number of new messages via mock control endpoint
+step('Add <count> new messages via mock control endpoint', async function (count) {
+  await addMessagesViaControlEndpoint(parseInt(count));
+});
+
+// Helper function to add messages via control endpoint
+async function addMessagesViaControlEndpoint(messagesToAdd) {
+  console.log(`Adding ${messagesToAdd} new messages via mock control endpoint...`);
+  
+  const controlAddress = process.env.CONTROL_API_ADDRESS || 'http://localhost:8080';
+  
+  try {
+    const https = controlAddress.startsWith('https:') ? require('https') : require('http');
+    const { URL } = require('url');
+    
+    // Get the current chat ID from the first message
+    const lines = getReceivedLines();
+    let liveChatId = 'test-chat-id'; // Default
+    
+    if (lines.length > 0) {
+      try {
+        const firstResponse = JSON.parse(lines[0]);
+        if (firstResponse.items && firstResponse.items.length > 0) {
+          liveChatId = firstResponse.items[0].snippet.liveChatId || liveChatId;
+        }
+      } catch (e) {
+        console.log('Could not parse first message for chat ID, using default');
+      }
+    }
+    
+    console.log(`Will add ${messagesToAdd} messages to chat ${liveChatId}`);
+    
+    // Create multiple messages
+    for (let i = 0; i < messagesToAdd; i++) {
+      const messageData = {
+        id: `test-message-${Date.now()}-${i}`,
+        liveChatId: liveChatId,
+        authorChannelId: `test-author-${Date.now()}-${i}`,
+        authorDisplayName: `Test User ${i}`,
+        messageText: `Test message ${i} added via control endpoint`,
+        isVerified: false
+      };
+      
+      const url = new URL(`${controlAddress}/control/chat_messages`);
+      const postData = JSON.stringify(messageData);
+      
+      console.log(`Creating message ${i + 1}: POST ${url.href}`);
+      
+      await new Promise((resolve, reject) => {
+        const options = {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          rejectUnauthorized: false  // Accept self-signed certificates in test environment
+        };
+        
+        const req = https.request(url, options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              console.log(`Message ${i + 1} created successfully`);
+              resolve();
+            } else {
+              console.error(`Failed to create message ${i + 1}: ${res.statusCode} - ${data}`);
+              reject(new Error(`Control endpoint returned status ${res.statusCode}: ${data}`));
+            }
+          });
+        });
+        
+        req.on('error', (err) => {
+          console.error(`Request error for message ${i + 1}: ${err.message}`);
+          reject(err);
+        });
+        
+        req.write(postData);
+        req.end();
+      });
+    }
+    
+    console.log(`Successfully added ${messagesToAdd} new messages via control endpoint`);
+  } catch (error) {
+    console.error(`Failed to add messages via control endpoint: ${error.message}`);
+    throw error;
+  }
+}
+
+// Wait for fetcher to receive new messages
+step('Wait for fetcher to receive new messages', async function () {
+  const initialCount = getInitialMessageCount();
+  console.log(`Waiting for new messages (initial count: ${initialCount})...`);
+  
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    const maxWaitTime = 10000; // 10 seconds
+    
+    const checkMessages = setInterval(() => {
+      elapsedTime += CHECK_INTERVAL_MS;
+      const currentLines = getReceivedLines();
+      
+      // Check if we received new messages
+      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
+        clearInterval(checkMessages);
+        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
+        resolve();
+      }
+    }, CHECK_INTERVAL_MS);
+  });
+});
+
+// Wait for stream timeout to occur
+step('Wait for stream timeout to occur', async function () {
+  // CHAT_STREAM_TIMEOUT is configured to 5 seconds, wait a bit longer to ensure timeout occurs
+  const timeoutWaitMs = 6000; // 6 seconds
+  console.log(`Waiting ${timeoutWaitMs}ms for stream timeout to occur...`);
+  await new Promise(resolve => setTimeout(resolve, timeoutWaitMs));
+  console.log('Timeout wait period completed');
+});
+
+// Wait for fetcher to reconnect
+step('Wait for fetcher to reconnect', async function () {
+  // Wait for the reconnect wait time plus some buffer
+  const reconnectWaitMs = 4000; // 4 seconds (3s reconnect wait + 1s buffer)
+  console.log(`Waiting ${reconnectWaitMs}ms for fetcher to reconnect...`);
+  await new Promise(resolve => setTimeout(resolve, reconnectWaitMs));
+  console.log('Reconnect wait period completed');
+});
+
+// Verify fetcher received additional messages with correct pagination
+step('Verify fetcher received additional messages with correct pagination', async function () {
+  const initialCount = getInitialMessageCount();
+  const currentLines = getReceivedLines();
+  
+  assert.ok(
+    currentLines.length > initialCount,
+    `Expected more than ${initialCount} messages after adding new ones but got ${currentLines.length}`
+  );
+  
+  console.log(`Verified received additional messages (initial: ${initialCount}, now: ${currentLines.length})`);
+  
+  // Parse messages to check for duplicates by ID
+  const messageIds = new Set();
+  let duplicateFound = false;
+  
+  currentLines.forEach((line, index) => {
+    try {
+      const response = JSON.parse(line);
+      if (response.items && Array.isArray(response.items)) {
+        response.items.forEach((item) => {
+          if (item.id) {
+            if (messageIds.has(item.id)) {
+              console.error(`Duplicate message ID found: ${item.id}`);
+              duplicateFound = true;
+            }
+            messageIds.add(item.id);
+          }
+        });
+      }
+    } catch (error) {
+      console.error(`Failed to parse line ${index}: ${error.message}`);
+    }
+  });
+  
+  assert.ok(!duplicateFound, 'Expected no duplicate message IDs (pagination should prevent duplicates)');
+  console.log(`Verified no duplicate message IDs across ${messageIds.size} unique messages`);
+});

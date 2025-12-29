@@ -1,12 +1,16 @@
 services:
+  # YouTube API Mock Server
+  # Repository: https://github.com/yuge42/yt-api-mock
   yt-api-mock:
-    image: ghcr.io/yuge42/yt-api-mock/server:dev-b7d5b30
+    image: ghcr.io/yuge42/yt-api-mock/server:dev-d18c431
     ports:
       - "50051:50051"
       - "8080:8080"
+      - "8081:8081"  # Health check and control endpoints
     environment:
       - LOG_LEVEL=info
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
+      - CHAT_STREAM_TIMEOUT=5
     volumes:
       - ./certs:/certs:ro

@@ -63,7 +63,7 @@ jobs:
           cd certs
           ./generate-certs.sh
 
-      - name: Run E2E tests
+      - name: Run E2E tests (with mock server)
         run: |
           cd tests
           docker compose up --build --abort-on-container-exit --exit-code-from tests
@@ -73,5 +73,34 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
+          path: tests/reports/
+          if-no-files-found: ignore
+
+  e2e-test-failfast:
+    name: E2E Fail-Fast Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Generate TLS certificates
+        run: |
+          cd certs
+          ./generate-certs.sh
+
+      - name: Run fail-fast tests (no mock server, Docker)
+        run: |
+          cd tests
+          docker compose run --rm tests gauge run --tags failfast specs/
+
+      - name: Upload fail-fast test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failfast-test-reports
           path: tests/reports/
           if-no-files-found: ignore
