@@ -87,37 +87,15 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.85
-
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Build fetcher binary
-        run: cargo build --verbose
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Gauge
+      - name: Generate TLS certificates
         run: |
-          curl -SsL https://downloads.gauge.org/stable | sh
-          gauge install js
+          cd certs
+          ./generate-certs.sh
 
-      - name: Install test dependencies
+      - name: Run fail-fast tests (no mock server, Docker)
         run: |
           cd tests
-          npm install
-
-      - name: Run fail-fast tests (no mock server)
-        run: |
-          cd tests
-          export FETCHER_BINARY=../target/debug/yt-comment-fetcher
-          gauge run --tags failfast specs/
+          docker compose run --rm tests gauge run --tags failfast specs/
 
       - name: Upload fail-fast test reports
         if: always()
