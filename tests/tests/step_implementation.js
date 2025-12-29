@@ -959,6 +959,14 @@ step('Wait for fetcher to exit gracefully', async function () {
     throw new Error('No fetcher process to wait for');
   }
 
+  // Check if process has already exited
+  if (fetcherProcess.exitCode !== null) {
+    console.log(`Fetcher process already exited with code ${fetcherProcess.exitCode}`);
+    getStore().put('exitCode', fetcherProcess.exitCode);
+    setFetcherProcess(null);
+    return;
+  }
+
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('Fetcher did not exit within timeout period'));
