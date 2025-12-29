@@ -13,14 +13,20 @@ RUN cargo build --release
 
 FROM node:20-slim
 
-# Install required packages including Gauge and netcat for healthcheck
+# Install required packages and Gauge via zip installer for reliability
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     unzip \
     netcat-openbsd \
-    && curl -SsL https://downloads.gauge.org/stable | sh \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Gauge from official zip release (v1.6.22)
+RUN curl -L https://github.com/getgauge/gauge/releases/download/v1.6.22/gauge-1.6.22-linux.x86_64.zip -o /tmp/gauge.zip \
+    && unzip /tmp/gauge.zip -d /tmp/gauge \
+    && mv /tmp/gauge/gauge /usr/local/bin/gauge \
+    && chmod +x /usr/local/bin/gauge \
+    && rm -rf /tmp/gauge /tmp/gauge.zip
 
 # Install Gauge JavaScript plugin
 RUN gauge install js
