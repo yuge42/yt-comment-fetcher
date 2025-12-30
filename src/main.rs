@@ -162,16 +162,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Track the next page token for pagination on reconnection
     let mut next_page_token: Option<String> = None;
 
-    // Process messages with reconnection on timeout/error and signal handling
+    // Process messages with reconnection on timeout/error
+    // SIGINT (Ctrl+C) causes immediate termination
     #[cfg(unix)]
     {
-        // Unix: Handle SIGTERM for graceful shutdown, allow SIGINT default behavior
-        let mut sigterm =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-
+        let mut sigint =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        
         loop {
             tokio::select! {
-                // Handle incoming messages from the stream
+                biased;  // Check branches in order, prioritizing signal handling
+                
+                _ = sigint.recv() => {
+                    // Exit immediately without cleanup - this is what users expect from Ctrl+C
+                    std::process::exit(130); // 128 + SIGINT (2) = 130
+                }
                 stream_result = stream.next() => {
                     handle_stream_message!(
                         stream_result,
@@ -183,34 +188,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         stream
                     );
                 }
-                // Handle SIGTERM
-                _ = sigterm.recv() => {
-                    eprintln!("Received SIGTERM, shutting down...");
-                    break;
+            }
+        }
+    }
+    
+    #[cfg(not(unix))]
+    {
+        loop {
+            tokio::select! {
+                biased;  // Check branches in order, prioritizing signal handling
+                
+                _ = tokio::signal::ctrl_c() => {
+                    // Exit immediately without cleanup
+                    std::process::exit(130);
+                }
+                stream_result = stream.next() => {
+                    handle_stream_message!(
+                        stream_result,
+                        next_page_token,
+                        server_url,
+                        api_key,
+                        chat_id,
+                        args.reconnect_wait_secs,
+                        stream
+                    );
                 }
             }
         }
     }
-
-    #[cfg(not(unix))]
-    {
-        // Non-Unix (e.g., Windows): No signal handling, allow default behavior
-        loop {
-            let stream_result = stream.next().await;
-            handle_stream_message!(
-                stream_result,
-                next_page_token,
-                server_url,
-                api_key,
-                chat_id,
-                args.reconnect_wait_secs,
-                stream
-            );
-        }
-    }
-
-    eprintln!("Shutdown complete");
-    Ok(())
 }
 
 async fn fetch_chat_id(
