@@ -122,6 +122,10 @@ step('Start the fetcher application', async function () {
     
     setFetcherProcess(fetcherProcess);
 
+    // Initialize stderr output capture
+    let stderrOutput = '';
+    getStore().put('stderrOutput', stderrOutput);
+
     let startupTimeout = setTimeout(() => {
       console.log('Fetcher started (timeout reached)');
       resolve();
@@ -147,6 +151,8 @@ step('Start the fetcher application', async function () {
     fetcherProcess.stderr.on('data', (data) => {
       const output = data.toString();
       console.log(`Fetcher stderr: ${output}`);
+      stderrOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
     });
 
     fetcherProcess.on('error', (error) => {
@@ -922,4 +928,83 @@ step('Verify fetcher received additional messages with correct pagination', asyn
   
   assert.ok(!duplicateFound, 'Expected no duplicate message IDs (pagination should prevent duplicates)');
   console.log(`Verified no duplicate message IDs across ${messageIds.size} unique messages`);
+});
+
+// Send SIGINT signal to fetcher
+step('Send SIGINT signal to fetcher', async function () {
+  const fetcherProcess = getFetcherProcess();
+  if (fetcherProcess && !fetcherProcess.killed) {
+    console.log('Sending SIGINT to fetcher process...');
+    fetcherProcess.kill('SIGINT');
+  } else {
+    throw new Error('No active fetcher process to send SIGINT to');
+  }
+});
+
+// Send SIGTERM signal to fetcher
+step('Send SIGTERM signal to fetcher', async function () {
+  const fetcherProcess = getFetcherProcess();
+  if (fetcherProcess && !fetcherProcess.killed) {
+    console.log('Sending SIGTERM to fetcher process...');
+    fetcherProcess.kill('SIGTERM');
+  } else {
+    throw new Error('No active fetcher process to send SIGTERM to');
+  }
+});
+
+// Wait for fetcher to exit gracefully
+step('Wait for fetcher to exit gracefully', async function () {
+  const fetcherProcess = getFetcherProcess();
+  if (!fetcherProcess) {
+    throw new Error('No fetcher process to wait for');
+  }
+
+  // Check if process has already exited
+  if (fetcherProcess.exitCode !== null) {
+    console.log(`Fetcher process already exited with code ${fetcherProcess.exitCode}`);
+    getStore().put('exitCode', fetcherProcess.exitCode);
+    setFetcherProcess(null);
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Fetcher did not exit within timeout period'));
+    }, 5000); // 5 second timeout
+
+    fetcherProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+      setFetcherProcess(null);
+      resolve();
+    });
+  });
+});
+
+// Verify fetcher logged shutdown message
+step('Verify fetcher logged shutdown message', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  assert.ok(
+    stderrOutput.includes('shutting down') || 
+    stderrOutput.includes('Shutdown complete'),
+    `Expected shutdown message in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher logged shutdown message');
+});
+
+// Verify fetcher exited with code
+step('Verify fetcher exited with code <expectedCode>', async function (expectedCode) {
+  const exitCode = getStore().get('exitCode');
+  const expected = parseInt(expectedCode, 10);
+  
+  assert.strictEqual(
+    exitCode,
+    expected,
+    `Expected exit code ${expected} but got ${exitCode}`
+  );
+  
+  console.log(`Verified fetcher exited with code ${expected}`);
 });

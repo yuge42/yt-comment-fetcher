@@ -14,7 +14,7 @@ description = "YouTube Live Comment Fetcher - A tool to fetch comments from YouT
 
 [workspace.dependencies]
 # Add shared dependencies here to keep versions aligned across members.
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-stream = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
