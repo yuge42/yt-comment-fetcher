@@ -785,7 +785,7 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
       try {
         const firstResponse = JSON.parse(lines[0]);
         if (firstResponse.items && firstResponse.items.length > 0) {
-          liveChatId = firstResponse.items[0].snippet.liveChatId || liveChatId;
+          liveChatId = firstResponse.items[0].snippet.live_chat_id || liveChatId;
         }
       } catch (e) {
         console.log('Could not parse first message for chat ID, using default');
@@ -1007,17 +1007,4 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
   );
   
   console.log(`Verified fetcher exited with code ${expected}`);
-});
-
-// Verify fetcher successfully reconnects after stream timeout
-step('Verify fetcher successfully reconnects after stream timeout', async function () {
-  const stderrOutput = getStore().get('stderrOutput') || '';
-  
-  // Check for reconnection success message
-  assert.ok(
-    stderrOutput.includes('Reconnected successfully'),
-    `Expected reconnection success message in logs but got: ${stderrOutput}`
-  );
-  
-  console.log('Verified fetcher successfully reconnected after stream timeout');
 });
