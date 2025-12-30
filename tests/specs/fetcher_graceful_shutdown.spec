@@ -13,11 +13,12 @@ This specification tests the shutdown behavior of the YouTube Comment Fetcher wh
 * Wait for fetcher to connect and receive messages
 * Verify fetcher outputs valid JSON stream
 * Send SIGINT signal to fetcher
-* Wait for fetcher to exit gracefully
-* Verify fetcher logged shutdown message
-* Verify fetcher exited with code "0"
+* Wait for fetcher to exit immediately
+* Verify fetcher exited with non-zero code
 
-## Test fetcher handles SIGTERM
+## Test fetcher handles SIGTERM on Unix
+
+Tags: unix
 
 * Start the fetcher application
 * Wait for fetcher to connect and receive messages

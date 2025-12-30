@@ -165,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Process messages with reconnection on timeout/error and signal handling
     #[cfg(unix)]
     {
-        // Unix: Handle both SIGINT and SIGTERM
+        // Unix: Handle SIGTERM for graceful shutdown, allow SIGINT default behavior
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
@@ -183,11 +183,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         stream
                     );
                 }
-                // Handle SIGINT (Ctrl+C)
-                _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down...");
-                    break;
-                }
                 // Handle SIGTERM
                 _ = sigterm.recv() => {
                     eprintln!("Received SIGTERM, shutting down...");
@@ -199,27 +194,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(not(unix))]
     {
-        // Non-Unix (e.g., Windows): Handle only SIGINT/Ctrl+C
+        // Non-Unix (e.g., Windows): No signal handling, allow default behavior
         loop {
-            tokio::select! {
-                // Handle incoming messages from the stream
-                stream_result = stream.next() => {
-                    handle_stream_message!(
-                        stream_result,
-                        next_page_token,
-                        server_url,
-                        api_key,
-                        chat_id,
-                        args.reconnect_wait_secs,
-                        stream
-                    );
-                }
-                // Handle SIGINT (Ctrl+C)
-                _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down...");
-                    break;
-                }
-            }
+            let stream_result = stream.next().await;
+            handle_stream_message!(
+                stream_result,
+                next_page_token,
+                server_url,
+                api_key,
+                chat_id,
+                args.reconnect_wait_secs,
+                stream
+            );
         }
     }
 

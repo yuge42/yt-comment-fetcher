@@ -982,6 +982,36 @@ step('Wait for fetcher to exit gracefully', async function () {
   });
 });
 
+// Wait for fetcher to exit immediately
+step('Wait for fetcher to exit immediately', async function () {
+  const fetcherProcess = getFetcherProcess();
+  if (!fetcherProcess) {
+    throw new Error('No fetcher process to wait for');
+  }
+
+  // Check if process has already exited
+  if (fetcherProcess.exitCode !== null) {
+    console.log(`Fetcher process already exited with code ${fetcherProcess.exitCode}`);
+    getStore().put('exitCode', fetcherProcess.exitCode);
+    setFetcherProcess(null);
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Fetcher did not exit within timeout period'));
+    }, 2000); // 2 second timeout for immediate exit
+
+    fetcherProcess.on('close', (code) => {
+      clearTimeout(timeout);
+      console.log(`Fetcher process exited immediately with code ${code}`);
+      getStore().put('exitCode', code);
+      setFetcherProcess(null);
+      resolve();
+    });
+  });
+});
+
 // Verify fetcher logged shutdown message
 step('Verify fetcher logged shutdown message', async function () {
   const stderrOutput = getStore().get('stderrOutput') || '';
@@ -1007,4 +1037,16 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
   );
   
   console.log(`Verified fetcher exited with code ${expected}`);
+});
+
+// Verify fetcher exited with non-zero code
+step('Verify fetcher exited with non-zero code', async function () {
+  const exitCode = getStore().get('exitCode');
+  
+  assert.ok(
+    exitCode !== 0 && exitCode !== null,
+    `Expected non-zero exit code but got ${exitCode}`
+  );
+  
+  console.log(`Verified fetcher exited with non-zero code ${exitCode}`);
 });
