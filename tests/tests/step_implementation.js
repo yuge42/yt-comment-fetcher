@@ -1000,7 +1000,7 @@ step('Wait for fetcher to exit immediately', async function () {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('Fetcher did not exit within timeout period'));
-    }, 2000); // 2 second timeout for immediate exit
+    }, 1000); // 1 second timeout for immediate exit
 
     fetcherProcess.on('close', (code) => {
       clearTimeout(timeout);
@@ -1044,7 +1044,7 @@ step('Verify fetcher exited with non-zero code', async function () {
   const exitCode = getStore().get('exitCode');
   
   assert.ok(
-    exitCode !== 0 && exitCode !== null,
+    exitCode != null && exitCode !== 0,
     `Expected non-zero exit code but got ${exitCode}`
   );
   
