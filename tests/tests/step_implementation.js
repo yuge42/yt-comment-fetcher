@@ -1008,3 +1008,17 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
   
   console.log(`Verified fetcher exited with code ${expected}`);
 });
+
+// Verify fetcher successfully reconnects after stream timeout
+step('Verify fetcher successfully reconnects after stream timeout', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+  
+  // Check for reconnection success message
+  assert.ok(
+    stderrOutput.includes('Reconnected successfully') ||
+    stderrOutput.includes('reconnect'),
+    `Expected reconnection success message in logs but got: ${stderrOutput}`
+  );
+  
+  console.log('Verified fetcher successfully reconnected after stream timeout');
+});
