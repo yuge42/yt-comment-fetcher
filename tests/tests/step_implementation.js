@@ -785,7 +785,7 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
       try {
         const firstResponse = JSON.parse(lines[0]);
         if (firstResponse.items && firstResponse.items.length > 0) {
-          liveChatId = firstResponse.items[0].snippet.liveChatId || liveChatId;
+          liveChatId = firstResponse.items[0].snippet.live_chat_id || liveChatId;
         }
       } catch (e) {
         console.log('Could not parse first message for chat ID, using default');

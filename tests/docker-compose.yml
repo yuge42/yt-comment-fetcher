@@ -2,7 +2,7 @@ services:
   # YouTube API Mock Server
   # Repository: https://github.com/yuge42/yt-api-mock
   yt-api-mock:
-    image: ghcr.io/yuge42/yt-api-mock/server:dev-d18c431
+    image: ghcr.io/yuge42/yt-api-mock/server:dev-391db47
     ports:
       - "50051:50051"
       - "8080:8080"

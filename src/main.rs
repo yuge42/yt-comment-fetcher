@@ -62,9 +62,15 @@ macro_rules! handle_stream_message {
                 // Update the page token for potential reconnection
                 $next_page_token = message.next_page_token.clone();
 
-                // Print message as JSON (non-delimited)
-                let json = serde_json::to_string(&message)?;
-                println!("{}", json);
+                // Check if the response contains any items
+                if message.items.is_empty() {
+                    // Log empty response to stderr instead of stdout
+                    eprintln!("Received empty response (no items)");
+                } else {
+                    // Print message as JSON (non-delimited)
+                    let json = serde_json::to_string(&message)?;
+                    println!("{}", json);
+                }
             }
             Some(Err(e)) => {
                 // Stream error (timeout or connection issue during streaming)
