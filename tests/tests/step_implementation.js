@@ -1015,8 +1015,7 @@ step('Verify fetcher successfully reconnects after stream timeout', async functi
   
   // Check for reconnection success message
   assert.ok(
-    stderrOutput.includes('Reconnected successfully') ||
-    stderrOutput.includes('reconnect'),
+    stderrOutput.includes('Reconnected successfully'),
     `Expected reconnection success message in logs but got: ${stderrOutput}`
   );
   
