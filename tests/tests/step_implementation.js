@@ -982,17 +982,17 @@ step('Wait for fetcher to exit gracefully', async function () {
   });
 });
 
-// Verify fetcher logged graceful shutdown message
-step('Verify fetcher logged graceful shutdown message', async function () {
+// Verify fetcher logged shutdown message
+step('Verify fetcher logged shutdown message', async function () {
   const stderrOutput = getStore().get('stderrOutput') || '';
   
   assert.ok(
-    stderrOutput.includes('shutting down gracefully') || 
+    stderrOutput.includes('shutting down') || 
     stderrOutput.includes('Shutdown complete'),
-    `Expected graceful shutdown message in logs but got: ${stderrOutput}`
+    `Expected shutdown message in logs but got: ${stderrOutput}`
   );
   
-  console.log('Verified fetcher logged graceful shutdown message');
+  console.log('Verified fetcher logged shutdown message');
 });
 
 // Verify fetcher exited with code

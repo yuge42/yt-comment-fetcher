@@ -179,12 +179,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 // Handle SIGINT (Ctrl+C)
                 _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down gracefully...");
+                    eprintln!("Received SIGINT, shutting down...");
                     break;
                 }
                 // Handle SIGTERM
                 _ = sigterm.recv() => {
-                    eprintln!("Received SIGTERM, shutting down gracefully...");
+                    eprintln!("Received SIGTERM, shutting down...");
                     break;
                 }
             }
@@ -210,7 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 // Handle SIGINT (Ctrl+C)
                 _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down gracefully...");
+                    eprintln!("Received SIGINT, shutting down...");
                     break;
                 }
             }
