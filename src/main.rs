@@ -19,19 +19,38 @@ struct Args {
     reconnect_wait_secs: u64,
 }
 
-/// Macro to log reconnection intent and schedule reconnection
-macro_rules! schedule_reconnection {
-    ($reason:expr, $page_token:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
-        eprintln!("{}", $reason);
-
-        // Log pagination status
-        if let Some(ref token) = $page_token {
-            eprintln!("Will resume from page token: {}", token);
+/// Macro to attempt reconnection and restart stream
+macro_rules! attempt_reconnect {
+    ($server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
+        // Attempt to reconnect and restart stream with pagination token
+        match YouTubeClient::connect($server_url.clone(), $api_key.clone()).await {
+            Ok(mut new_client) => {
+                match new_client
+                    .stream_comments(Some($chat_id.clone()), $page_token.clone())
+                    .await
+                {
+                    Ok(new_stream) => {
+                        $stream = new_stream;
+                        eprintln!("Reconnected successfully");
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to restart stream after reconnection: {}", e);
+                        // Schedule another reconnection attempt
+                        $reconnect_until = Some(
+                            tokio::time::Instant::now()
+                                + tokio::time::Duration::from_secs($reconnect_secs),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to reconnect: {}", e);
+                // Schedule another reconnection attempt
+                $reconnect_until = Some(
+                    tokio::time::Instant::now() + tokio::time::Duration::from_secs($reconnect_secs),
+                );
+            }
         }
-
-        // Schedule reconnection
-        $reconnect_until =
-            Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs($reconnect_secs));
     }};
 }
 
@@ -55,28 +74,38 @@ macro_rules! handle_stream_message {
             }
             Some(Err(e)) => {
                 // Stream error (timeout or connection issue during streaming)
-                let reason = format!(
+                eprintln!(
                     "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
                     e, $reconnect_wait_secs
                 );
-                schedule_reconnection!(
-                    reason,
-                    $next_page_token,
-                    $reconnect_until,
-                    $reconnect_wait_secs
+
+                // Log pagination status
+                if let Some(ref token) = $next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+
+                // Schedule reconnection
+                $reconnect_until = Some(
+                    tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs($reconnect_wait_secs),
                 );
             }
             None => {
                 // Stream ended (timeout or connection closed)
-                let reason = format!(
+                eprintln!(
                     "Stream ended. Waiting {} seconds before reconnecting...",
                     $reconnect_wait_secs
                 );
-                schedule_reconnection!(
-                    reason,
-                    $next_page_token,
-                    $reconnect_until,
-                    $reconnect_wait_secs
+
+                // Log pagination status
+                if let Some(ref token) = $next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+
+                // Schedule reconnection
+                $reconnect_until = Some(
+                    tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs($reconnect_wait_secs),
                 );
             }
         }
@@ -156,30 +185,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
-                        // Attempt to reconnect and restart stream with pagination token
-                        match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
-                            Ok(mut new_client) => {
-                                match new_client
-                                    .stream_comments(Some(chat_id.clone()), next_page_token.clone())
-                                    .await
-                                {
-                                    Ok(new_stream) => {
-                                        stream = new_stream;
-                                        eprintln!("Reconnected successfully");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to restart stream after reconnection: {}", e);
-                                        // Schedule another reconnection attempt
-                                        reconnect_until = Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(args.reconnect_wait_secs));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to reconnect: {}", e);
-                                // Schedule another reconnection attempt
-                                reconnect_until = Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(args.reconnect_wait_secs));
-                            }
-                        }
+                        attempt_reconnect!(
+                            server_url,
+                            api_key,
+                            chat_id,
+                            next_page_token,
+                            stream,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
@@ -231,30 +245,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
-                        // Attempt to reconnect and restart stream with pagination token
-                        match YouTubeClient::connect(server_url.clone(), api_key.clone()).await {
-                            Ok(mut new_client) => {
-                                match new_client
-                                    .stream_comments(Some(chat_id.clone()), next_page_token.clone())
-                                    .await
-                                {
-                                    Ok(new_stream) => {
-                                        stream = new_stream;
-                                        eprintln!("Reconnected successfully");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to restart stream after reconnection: {}", e);
-                                        // Schedule another reconnection attempt
-                                        reconnect_until = Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(args.reconnect_wait_secs));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to reconnect: {}", e);
-                                // Schedule another reconnection attempt
-                                reconnect_until = Some(tokio::time::Instant::now() + tokio::time::Duration::from_secs(args.reconnect_wait_secs));
-                            }
-                        }
+                        attempt_reconnect!(
+                            server_url,
+                            api_key,
+                            chat_id,
+                            next_page_token,
+                            stream,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
