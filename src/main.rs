@@ -19,18 +19,9 @@ struct Args {
     reconnect_wait_secs: u64,
 }
 
-/// Macro to handle reconnection logic (avoids code duplication)
-macro_rules! handle_reconnection {
-    ($reason:expr, $server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $reconnect_secs:expr, $stream:expr) => {{
-        eprintln!("{}", $reason);
-
-        // Log pagination status
-        if let Some(ref token) = $page_token {
-            eprintln!("Will resume from page token: {}", token);
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_secs($reconnect_secs)).await;
-
+/// Macro to attempt reconnection and restart stream
+macro_rules! attempt_reconnect {
+    ($server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
         // Attempt to reconnect and restart stream with pagination token
         match YouTubeClient::connect($server_url.clone(), $api_key.clone()).await {
             Ok(mut new_client) => {
@@ -44,11 +35,20 @@ macro_rules! handle_reconnection {
                     }
                     Err(e) => {
                         eprintln!("Failed to restart stream after reconnection: {}", e);
+                        // Schedule another reconnection attempt
+                        $reconnect_until = Some(
+                            tokio::time::Instant::now()
+                                + tokio::time::Duration::from_secs($reconnect_secs),
+                        );
                     }
                 }
             }
             Err(e) => {
                 eprintln!("Failed to reconnect: {}", e);
+                // Schedule another reconnection attempt
+                $reconnect_until = Some(
+                    tokio::time::Instant::now() + tokio::time::Duration::from_secs($reconnect_secs),
+                );
             }
         }
     }};
@@ -56,7 +56,7 @@ macro_rules! handle_reconnection {
 
 /// Macro to handle stream messages (avoids code duplication)
 macro_rules! handle_stream_message {
-    ($stream_result:expr, $next_page_token:ident, $server_url:ident, $api_key:ident, $chat_id:ident, $reconnect_wait_secs:expr, $stream:ident) => {
+    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr) => {
         match $stream_result {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
@@ -74,34 +74,38 @@ macro_rules! handle_stream_message {
             }
             Some(Err(e)) => {
                 // Stream error (timeout or connection issue during streaming)
-                let reason = format!(
+                eprintln!(
                     "Error receiving message: {}\nConnection lost. Waiting {} seconds before reconnecting...",
                     e, $reconnect_wait_secs
                 );
-                handle_reconnection!(
-                    reason,
-                    $server_url,
-                    $api_key,
-                    $chat_id,
-                    $next_page_token,
-                    $reconnect_wait_secs,
-                    $stream
+
+                // Log pagination status
+                if let Some(ref token) = $next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+
+                // Schedule reconnection
+                $reconnect_until = Some(
+                    tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs($reconnect_wait_secs),
                 );
             }
             None => {
                 // Stream ended (timeout or connection closed)
-                let reason = format!(
+                eprintln!(
                     "Stream ended. Waiting {} seconds before reconnecting...",
                     $reconnect_wait_secs
                 );
-                handle_reconnection!(
-                    reason,
-                    $server_url,
-                    $api_key,
-                    $chat_id,
-                    $next_page_token,
-                    $reconnect_wait_secs,
-                    $stream
+
+                // Log pagination status
+                if let Some(ref token) = $next_page_token {
+                    eprintln!("Will resume from page token: {}", token);
+                }
+
+                // Schedule reconnection
+                $reconnect_until = Some(
+                    tokio::time::Instant::now()
+                        + tokio::time::Duration::from_secs($reconnect_wait_secs),
                 );
             }
         }
@@ -162,6 +166,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Track the next page token for pagination on reconnection
     let mut next_page_token: Option<String> = None;
 
+    // Track when we should attempt reconnection (None means we're connected)
+    let mut reconnect_until: Option<tokio::time::Instant> = None;
+
     // Process messages with reconnection on timeout/error and signal handling
     #[cfg(unix)]
     {
@@ -170,28 +177,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
 
         loop {
-            tokio::select! {
-                // Handle incoming messages from the stream
-                stream_result = stream.next() => {
-                    handle_stream_message!(
-                        stream_result,
-                        next_page_token,
-                        server_url,
-                        api_key,
-                        chat_id,
-                        args.reconnect_wait_secs,
-                        stream
-                    );
+            // If we're scheduled to reconnect, wait until the time arrives
+            if let Some(until) = reconnect_until {
+                tokio::select! {
+                    // Wait for the reconnection delay
+                    _ = tokio::time::sleep_until(until) => {
+                        // Time to reconnect
+                        reconnect_until = None;
+
+                        attempt_reconnect!(
+                            server_url,
+                            api_key,
+                            chat_id,
+                            next_page_token,
+                            stream,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
+                    }
+                    // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
+                    _ = tokio::signal::ctrl_c() => {
+                        eprintln!("Received SIGINT, shutting down...");
+                        break;
+                    }
+                    // Handle SIGTERM - immediate exit even during reconnect wait
+                    _ = sigterm.recv() => {
+                        eprintln!("Received SIGTERM, shutting down...");
+                        break;
+                    }
                 }
-                // Handle SIGINT (Ctrl+C)
-                _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down...");
-                    break;
-                }
-                // Handle SIGTERM
-                _ = sigterm.recv() => {
-                    eprintln!("Received SIGTERM, shutting down...");
-                    break;
+            } else {
+                // Normal operation - process stream messages
+                tokio::select! {
+                    // Handle incoming messages from the stream
+                    stream_result = stream.next() => {
+                        handle_stream_message!(
+                            stream_result,
+                            next_page_token,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
+                    }
+                    // Handle SIGINT (Ctrl+C)
+                    _ = tokio::signal::ctrl_c() => {
+                        eprintln!("Received SIGINT, shutting down...");
+                        break;
+                    }
+                    // Handle SIGTERM
+                    _ = sigterm.recv() => {
+                        eprintln!("Received SIGTERM, shutting down...");
+                        break;
+                    }
                 }
             }
         }
@@ -201,23 +237,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // Non-Unix (e.g., Windows): Handle only SIGINT/Ctrl+C
         loop {
-            tokio::select! {
-                // Handle incoming messages from the stream
-                stream_result = stream.next() => {
-                    handle_stream_message!(
-                        stream_result,
-                        next_page_token,
-                        server_url,
-                        api_key,
-                        chat_id,
-                        args.reconnect_wait_secs,
-                        stream
-                    );
+            // If we're scheduled to reconnect, wait until the time arrives
+            if let Some(until) = reconnect_until {
+                tokio::select! {
+                    // Wait for the reconnection delay
+                    _ = tokio::time::sleep_until(until) => {
+                        // Time to reconnect
+                        reconnect_until = None;
+
+                        attempt_reconnect!(
+                            server_url,
+                            api_key,
+                            chat_id,
+                            next_page_token,
+                            stream,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
+                    }
+                    // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
+                    _ = tokio::signal::ctrl_c() => {
+                        eprintln!("Received SIGINT, shutting down...");
+                        break;
+                    }
                 }
-                // Handle SIGINT (Ctrl+C)
-                _ = tokio::signal::ctrl_c() => {
-                    eprintln!("Received SIGINT, shutting down...");
-                    break;
+            } else {
+                // Normal operation - process stream messages
+                tokio::select! {
+                    // Handle incoming messages from the stream
+                    stream_result = stream.next() => {
+                        handle_stream_message!(
+                            stream_result,
+                            next_page_token,
+                            reconnect_until,
+                            args.reconnect_wait_secs
+                        );
+                    }
+                    // Handle SIGINT (Ctrl+C)
+                    _ = tokio::signal::ctrl_c() => {
+                        eprintln!("Received SIGINT, shutting down...");
+                        break;
+                    }
                 }
             }
         }
