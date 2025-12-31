@@ -1013,6 +1013,7 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
 
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 
 function setOutputFilePath(path) {
   getStore().put('outputFilePath', path);
@@ -1032,7 +1033,8 @@ function getMessageCountBeforeResume() {
 
 // Create a temporary output file
 step('Create a temporary output file', async function () {
-  const tempFilePath = path.join(os.tmpdir(), `fetcher-test-${Date.now()}.json`);
+  const uniqueId = crypto.randomUUID();
+  const tempFilePath = path.join(os.tmpdir(), `fetcher-test-${uniqueId}.json`);
   setOutputFilePath(tempFilePath);
   console.log(`Created temporary output file path: ${tempFilePath}`);
 });

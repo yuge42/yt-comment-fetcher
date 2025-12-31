@@ -218,7 +218,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try to resume from file if requested
     let (mut chat_id, initial_page_token) = if args.resume {
-        let output_path = args.output_file.as_ref().unwrap();
+        let output_path = args
+            .output_file
+            .as_ref()
+            .expect("output_file is guaranteed to be Some when resume is true");
         eprintln!("Attempting to resume from: {}", output_path);
 
         match read_last_line(output_path)? {
@@ -271,7 +274,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Got chat ID: {}", chat_id.as_ref().unwrap());
     }
 
-    let chat_id = chat_id.unwrap(); // Safe because we've ensured chat_id is Some at this point
+    let chat_id = chat_id.expect("chat_id is guaranteed to be Some at this point");
 
     // Get gRPC server address from environment variable or use default
     // Note: For TLS-enabled gRPC connections, tonic requires https:// prefix
