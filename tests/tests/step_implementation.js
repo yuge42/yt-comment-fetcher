@@ -1008,3 +1008,253 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
   
   console.log(`Verified fetcher exited with code ${expected}`);
 });
+
+// === File Output Test Steps ===
+
+const fs = require('fs');
+const os = require('os');
+
+function setOutputFilePath(path) {
+  getStore().put('outputFilePath', path);
+}
+
+function getOutputFilePath() {
+  return getStore().get('outputFilePath');
+}
+
+function setMessageCountBeforeResume(count) {
+  getStore().put('messageCountBeforeResume', count);
+}
+
+function getMessageCountBeforeResume() {
+  return getStore().get('messageCountBeforeResume');
+}
+
+// Create a temporary output file
+step('Create a temporary output file', async function () {
+  const tempFilePath = path.join(os.tmpdir(), `fetcher-test-${Date.now()}.json`);
+  setOutputFilePath(tempFilePath);
+  console.log(`Created temporary output file path: ${tempFilePath}`);
+});
+
+// Start the fetcher application with output file
+step('Start the fetcher application with output file', async function () {
+  return new Promise((resolve, reject) => {
+    setReceivedLines([]);
+    
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    console.log(`Starting fetcher from: ${binaryPath}`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    const outputFilePath = getOutputFilePath();
+    const args = ['--video-id', 'test-video-1', '--output-file', outputFilePath];
+    
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    console.log(`Starting with args: ${args.join(' ')}`);
+    
+    const fetcherProcess = spawn(binaryPath, args, { env: env });
+    setFetcherProcess(fetcherProcess);
+
+    let stderrOutput = '';
+    getStore().put('stderrOutput', stderrOutput);
+
+    let startupTimeout = setTimeout(() => {
+      console.log('Fetcher started (timeout reached)');
+      resolve();
+    }, STARTUP_TIMEOUT_MS);
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      stderrOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
+      
+      // Resolve once we see connection messages
+      if (stderrOutput.includes('Connecting to gRPC server') && startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+        resolve();
+      }
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+      }
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+    });
+  });
+});
+
+// Verify output file exists
+step('Verify output file exists', async function () {
+  const outputFilePath = getOutputFilePath();
+  assert.ok(fs.existsSync(outputFilePath), `Output file does not exist: ${outputFilePath}`);
+  console.log(`Verified output file exists: ${outputFilePath}`);
+});
+
+// Verify output file contains valid JSON lines
+step('Verify output file contains valid JSON lines', async function () {
+  const outputFilePath = getOutputFilePath();
+  const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+  const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+  
+  assert.ok(lines.length > 0, 'Output file is empty');
+  
+  lines.forEach((line, index) => {
+    try {
+      const parsed = JSON.parse(line);
+      console.log(`Line ${index} is valid JSON with kind: ${parsed.kind || 'N/A'}`);
+    } catch (e) {
+      throw new Error(`Line ${index} is not valid JSON: ${line}\nError: ${e.message}`);
+    }
+  });
+  
+  console.log(`Verified ${lines.length} valid JSON lines in output file`);
+});
+
+// Verify file contains at least N JSON messages
+step('Verify file contains at least <count> JSON messages', async function (count) {
+  const expectedCount = parseInt(count, 10);
+  
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    
+    const checkFileContent = setInterval(() => {
+      elapsedTime += CHECK_INTERVAL_MS;
+      
+      const outputFilePath = getOutputFilePath();
+      if (fs.existsSync(outputFilePath)) {
+        const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+        const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+        
+        if (lines.length >= expectedCount || elapsedTime >= MAX_WAIT_TIME_MS) {
+          clearInterval(checkFileContent);
+          assert.ok(
+            lines.length >= expectedCount,
+            `Expected at least ${expectedCount} messages but got ${lines.length}`
+          );
+          console.log(`Verified file contains ${lines.length} messages (expected at least ${expectedCount})`);
+          resolve();
+        }
+      } else if (elapsedTime >= MAX_WAIT_TIME_MS) {
+        clearInterval(checkFileContent);
+        throw new Error(`Output file does not exist after ${MAX_WAIT_TIME_MS}ms`);
+      }
+    }, CHECK_INTERVAL_MS);
+  });
+});
+
+// Clean up temporary output file
+step('Clean up temporary output file', async function () {
+  const outputFilePath = getOutputFilePath();
+  if (outputFilePath && fs.existsSync(outputFilePath)) {
+    fs.unlinkSync(outputFilePath);
+    console.log(`Cleaned up temporary output file: ${outputFilePath}`);
+  }
+});
+
+// Count messages in output file
+step('Count messages in output file', async function () {
+  const outputFilePath = getOutputFilePath();
+  const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+  const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+  setMessageCountBeforeResume(lines.length);
+  console.log(`Counted ${lines.length} messages before resume`);
+});
+
+// Start the fetcher application with resume flag
+step('Start the fetcher application with resume flag', async function () {
+  return new Promise((resolve, reject) => {
+    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+    console.log(`Starting fetcher from: ${binaryPath} with resume`);
+    
+    const env = Object.assign({}, process.env);
+    const serverAddress = getServerAddress();
+    if (serverAddress) {
+      env.SERVER_ADDRESS = serverAddress;
+    }
+    
+    const outputFilePath = getOutputFilePath();
+    const args = ['--output-file', outputFilePath, '--resume'];
+    
+    const apiKeyPath = getApiKeyPath();
+    if (apiKeyPath) {
+      args.push('--api-key-path', apiKeyPath);
+      console.log(`Using API key from: ${apiKeyPath}`);
+    }
+    
+    console.log(`Starting with args: ${args.join(' ')}`);
+    
+    const fetcherProcess = spawn(binaryPath, args, { env: env });
+    setFetcherProcess(fetcherProcess);
+
+    let stderrOutput = '';
+    getStore().put('stderrOutput', stderrOutput);
+
+    let startupTimeout = setTimeout(() => {
+      console.log('Fetcher started with resume (timeout reached)');
+      resolve();
+    }, STARTUP_TIMEOUT_MS);
+
+    fetcherProcess.stderr.on('data', (data) => {
+      const output = data.toString();
+      console.log(`Fetcher stderr: ${output}`);
+      stderrOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
+      
+      // Resolve once we see resume or connection messages
+      if ((stderrOutput.includes('Resuming') || stderrOutput.includes('Connecting to gRPC server')) && startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+        resolve();
+      }
+    });
+
+    fetcherProcess.on('error', (error) => {
+      console.error(`Failed to start fetcher: ${error.message}`);
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+      }
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
+    });
+
+    fetcherProcess.on('close', (code) => {
+      console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', code);
+    });
+  });
+});
+
+// Verify file contains more messages than before
+step('Verify file contains more messages than before', async function () {
+  const outputFilePath = getOutputFilePath();
+  const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+  const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+  const beforeCount = getMessageCountBeforeResume();
+  
+  assert.ok(
+    lines.length > beforeCount,
+    `Expected more than ${beforeCount} messages but got ${lines.length}`
+  );
+  
+  console.log(`Verified file contains ${lines.length} messages (was ${beforeCount} before resume)`);
+});
