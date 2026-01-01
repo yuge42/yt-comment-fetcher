@@ -161,18 +161,24 @@ fn parse_resume_info(
     let value: serde_json::Value = serde_json::from_str(json_line)?;
 
     // Extract live_chat_id from items[0].snippet.live_chat_id
+    // Try both snake_case (live_chat_id) and camelCase (liveChatId) for compatibility
     let chat_id = value
         .get("items")
         .and_then(|items| items.as_array())
         .and_then(|arr| arr.first())
         .and_then(|item| item.get("snippet"))
-        .and_then(|snippet| snippet.get("liveChatId"))
+        .and_then(|snippet| {
+            snippet
+                .get("live_chat_id")
+                .or_else(|| snippet.get("liveChatId"))
+        })
         .and_then(|id| id.as_str())
         .map(|s| s.to_string());
 
-    // Extract next_page_token
+    // Extract next_page_token (try both snake_case and camelCase)
     let next_page_token = value
         .get("nextPageToken")
+        .or_else(|| value.get("next_page_token"))
         .and_then(|token| token.as_str())
         .map(|s| s.to_string());
 
