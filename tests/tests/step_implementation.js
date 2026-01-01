@@ -778,7 +778,19 @@ async function addMessagesViaControlEndpoint(messagesToAdd) {
     const { URL } = require('url');
     
     // Get the current chat ID from the first message
-    const lines = getReceivedLines();
+    // Try output file first, then fall back to stdout lines
+    let lines = [];
+    const outputFilePath = getOutputFilePath();
+    
+    if (outputFilePath && fs.existsSync(outputFilePath)) {
+      const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+      lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+      console.log(`Reading chat ID from output file: ${outputFilePath}`);
+    } else {
+      lines = getReceivedLines();
+      console.log(`Reading chat ID from received lines`);
+    }
+    
     let liveChatId = 'test-chat-id'; // Default
     
     if (lines.length > 0) {

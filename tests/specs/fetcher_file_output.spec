@@ -27,8 +27,9 @@ This specification tests the YouTube Comment Fetcher application's ability to wr
 * Verify file contains at least "3" JSON messages
 * Stop the fetcher application
 * Count messages in output file
+* Add "3" new messages via mock control endpoint
 * Start the fetcher application with resume flag
-* Wait for fetcher to connect and receive messages (mock server continues to send new messages)
+* Wait for fetcher to connect and receive messages
 * Verify file contains more messages than before
 * Stop the fetcher application
 * Clean up temporary output file
