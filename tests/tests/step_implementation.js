@@ -1272,3 +1272,40 @@ step('Verify file contains more messages than before', async function () {
   
   console.log(`Verified file contains ${lines.length} messages (was ${beforeCount} before resume)`);
 });
+
+// Verify file contains no duplicate messages
+step('Verify file contains no duplicate messages', async function () {
+  const outputFilePath = getOutputFilePath();
+  const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+  const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
+  
+  const messageIds = new Set();
+  const duplicates = [];
+  
+  lines.forEach((line, index) => {
+    try {
+      const response = JSON.parse(line);
+      if (response.items && Array.isArray(response.items)) {
+        response.items.forEach(item => {
+          if (item.id) {
+            if (messageIds.has(item.id)) {
+              duplicates.push({ id: item.id, lineIndex: index });
+            } else {
+              messageIds.add(item.id);
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn(`Could not parse line ${index} for duplicate check: ${e.message}`);
+    }
+  });
+  
+  assert.strictEqual(
+    duplicates.length,
+    0,
+    `Found ${duplicates.length} duplicate message(s): ${JSON.stringify(duplicates.slice(0, 5))}`
+  );
+  
+  console.log(`Verified no duplicates among ${messageIds.size} unique messages in file`);
+});

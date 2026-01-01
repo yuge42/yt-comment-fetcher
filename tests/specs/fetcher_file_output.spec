@@ -31,5 +31,6 @@ This specification tests the YouTube Comment Fetcher application's ability to wr
 * Start the fetcher application with resume flag
 * Wait for fetcher to connect and receive messages
 * Verify file contains more messages than before
+* Verify file contains no duplicate messages
 * Stop the fetcher application
 * Clean up temporary output file
