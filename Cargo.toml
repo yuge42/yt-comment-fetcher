@@ -43,3 +43,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 clap = { workspace = true }
+rev_lines = "0.3.0"

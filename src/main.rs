@@ -131,7 +131,8 @@ macro_rules! handle_stream_message {
 
 /// Read the last line from a file
 fn read_last_line(path: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    use std::io::{BufRead, BufReader};
+    use rev_lines::RevLines;
+    use std::io::BufReader;
 
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -140,16 +141,17 @@ fn read_last_line(path: &str) -> Result<Option<String>, Box<dyn std::error::Erro
     };
 
     let reader = BufReader::new(file);
-    let mut last_line: Option<String> = None;
+    let rev_lines = RevLines::new(reader);
 
-    for line in reader.lines() {
+    // Get the first non-empty line from the end
+    for line in rev_lines {
         let line = line?;
         if !line.trim().is_empty() {
-            last_line = Some(line);
+            return Ok(Some(line));
         }
     }
 
-    Ok(last_line)
+    Ok(None)
 }
 
 /// Parse resume information from the last JSON line
