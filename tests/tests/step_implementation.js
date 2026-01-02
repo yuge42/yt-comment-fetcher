@@ -92,22 +92,20 @@ step('API key path from environment variable <envVar>', async function (envVar) 
  * Unified helper function to start the fetcher process with various options
  * @param {Object} options - Configuration options for starting the fetcher
  * @param {string} options.videoId - Video ID argument (optional, omit to test without video ID)
- * @param {boolean} options.includeApiKey - Whether to include API key from store (default: true)
+ * @param {boolean} options.skipApiKey - Whether to skip API key from store (default: false)
  * @param {string} options.reconnectWaitSecs - Reconnect wait time in seconds (optional)
  * @param {string} options.outputFile - Output file path (optional)
  * @param {boolean} options.resume - Whether to use resume flag (default: false)
- * @param {boolean} options.expectFailure - Whether to expect the process to fail (default: false)
  * @param {boolean} options.captureStdout - Whether to capture stdout lines (default: true unless outputFile is set)
- * @returns {Promise} Resolves when fetcher starts or fails as expected
+ * @returns {Promise} Resolves when fetcher starts or fails
  */
 async function startFetcherWithOptions(options = {}) {
   const {
     videoId = 'test-video-1',
-    includeApiKey = true,
+    skipApiKey = false,
     reconnectWaitSecs = null,
     outputFile = null,
     resume = false,
-    expectFailure = false,
     captureStdout = !outputFile
   } = options;
 
@@ -118,12 +116,11 @@ async function startFetcherWithOptions(options = {}) {
     
     const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
     
-    const description = expectFailure ? 'expecting failure' : 
-                        resume ? 'with resume' :
+    const description = resume ? 'with resume' :
                         outputFile ? 'with output file' :
                         reconnectWaitSecs ? `with reconnect wait time ${reconnectWaitSecs}s` :
                         !videoId ? 'without video ID' :
-                        !includeApiKey ? 'without API key' : '';
+                        skipApiKey ? 'without API key' : '';
     console.log(`Starting fetcher from: ${binaryPath} ${description}`);
     
     const env = Object.assign({}, process.env);
@@ -148,7 +145,7 @@ async function startFetcherWithOptions(options = {}) {
     }
     
     const apiKeyPath = getApiKeyPath();
-    if (includeApiKey && apiKeyPath) {
+    if (!skipApiKey && apiKeyPath) {
       args.push('--api-key-path', apiKeyPath);
       console.log(`Using API key from: ${apiKeyPath}`);
     }
@@ -169,23 +166,13 @@ async function startFetcherWithOptions(options = {}) {
     getStore().put('stderrOutput', stderrOutput);
     getStore().put('errorOutput', errorOutput);
 
-    // Set up startup timeout for normal starts
-    if (!expectFailure && captureStdout) {
-      startupTimeout = setTimeout(() => {
-        console.log('Fetcher started (timeout reached)');
-        resolve();
-      }, STARTUP_TIMEOUT_MS);
-    } else if (!expectFailure && outputFile) {
-      startupTimeout = setTimeout(() => {
-        console.log('Fetcher started (timeout reached)');
-        resolve();
-      }, STARTUP_TIMEOUT_MS);
-    } else if (expectFailure) {
-      // For expected failures, wait longer to capture exit
-      startupTimeout = setTimeout(() => {
-        resolve();
-      }, 3000);
-    }
+    // Set up startup timeout - always use shorter timeout for processes that exit quickly
+    // or longer timeout for processes that should keep running
+    const timeoutMs = captureStdout ? STARTUP_TIMEOUT_MS : (outputFile ? STARTUP_TIMEOUT_MS : 3000);
+    startupTimeout = setTimeout(() => {
+      console.log('Fetcher started (timeout reached)');
+      resolve();
+    }, timeoutMs);
 
     if (captureStdout) {
       fetcherProcess.stdout.on('data', (data) => {
@@ -198,7 +185,7 @@ async function startFetcherWithOptions(options = {}) {
         setReceivedLines(receivedLines);
         
         // Once we start receiving data, resolve the startup promise
-        if (receivedLines.length > 0 && startupTimeout && !expectFailure) {
+        if (receivedLines.length > 0 && startupTimeout) {
           clearTimeout(startupTimeout);
           startupTimeout = null;
           resolve();
@@ -219,7 +206,7 @@ async function startFetcherWithOptions(options = {}) {
       getStore().put('errorOutput', errorOutput);
       
       // For output file mode, resolve on connection message
-      if (outputFile && !expectFailure && startupTimeout) {
+      if (outputFile && startupTimeout) {
         if (stderrOutput.includes('Connecting to gRPC server') || 
             stderrOutput.includes('Resuming')) {
           clearTimeout(startupTimeout);
@@ -235,11 +222,8 @@ async function startFetcherWithOptions(options = {}) {
         clearTimeout(startupTimeout);
         startupTimeout = null;
       }
-      if (!expectFailure) {
-        reject(new Error(`Failed to start fetcher: ${error.message}`));
-      } else {
-        resolve();
-      }
+      // Always reject on spawn errors
+      reject(new Error(`Failed to start fetcher: ${error.message}`));
     });
 
     fetcherProcess.on('close', (code) => {
@@ -249,9 +233,12 @@ async function startFetcherWithOptions(options = {}) {
       getStore().put('errorOutput', errorOutput);
       getStore().put('stderrOutput', stderrOutput);
       
-      if (expectFailure || !captureStdout) {
-        resolve();
+      // Always resolve on process close - caller can check exit code
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
       }
+      resolve();
     });
   });
 }
@@ -259,8 +246,7 @@ async function startFetcherWithOptions(options = {}) {
 // Start the fetcher application
 step('Start the fetcher application', async function () {
   return startFetcherWithOptions({
-    videoId: 'test-video-1',
-    includeApiKey: true
+    videoId: 'test-video-1'
   });
 });
 
@@ -371,16 +357,14 @@ step('Stop the fetcher application', async function () {
 // Start the fetcher application without video ID argument
 step('Start the fetcher application without video ID argument', async function () {
   return startFetcherWithOptions({
-    videoId: null,
-    expectFailure: true
+    videoId: null
   });
 });
 
 // Start the fetcher application with invalid video ID
 step('Start the fetcher application with invalid video ID <videoId>', async function (videoId) {
   return startFetcherWithOptions({
-    videoId: videoId,
-    expectFailure: true
+    videoId: videoId
   });
 });
 
@@ -422,8 +406,7 @@ step('Verify fetcher exits with error about video not found', async function () 
 step('Start the fetcher application without API key', async function () {
   return startFetcherWithOptions({
     videoId: 'test-video-1',
-    includeApiKey: false,
-    expectFailure: true
+    skipApiKey: true
   });
 });
 
@@ -549,8 +532,7 @@ step('Verify reconnect wait time is <seconds> seconds in logs', async function (
 // Start the fetcher application and expect failure
 step('Start the fetcher application and expect failure', async function () {
   return startFetcherWithOptions({
-    videoId: 'test-video-1',
-    expectFailure: true
+    videoId: 'test-video-1'
   });
 });
 
