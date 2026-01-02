@@ -29,6 +29,38 @@ The application will:
 2. Connect to the gRPC server and stream comments to stdout as JSON
 3. Automatically reconnect if the stream times out during message reception (default: wait 5 seconds between attempts)
 
+### Saving Comments to a File
+
+You can save comments directly to a file using the `--output-file` option:
+
+```bash
+# Save comments to a file (one JSON object per line)
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --output-file comments.json
+```
+
+### Resuming from a Saved File
+
+If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag:
+
+```bash
+# Resume streaming from the last message in the file
+./target/release/yt-comment-fetcher \
+  --output-file comments.json \
+  --resume \
+  --api-key-path api-key.txt
+```
+
+The `--resume` flag:
+- Reads the last line from the output file
+- Extracts the chat ID and pagination token
+- Continues streaming from where it left off
+- `--video-id` becomes optional when using `--resume`, but can be provided as a fallback if the chat ID cannot be extracted from the file
+
+**Note:** When using `--resume`, the `--output-file` must be specified, but `--video-id` is optional.
+
 **Reconnection:** If the gRPC stream times out or is lost during message reception, the fetcher will automatically attempt to reconnect. Initial connection failures will cause the application to exit immediately (fail-fast behavior appropriate for CLI tools). You can configure the wait time between reconnection attempts:
 
 ```bash
@@ -47,7 +79,22 @@ The `viewer.sh` script formats JSON output into a readable colored format. It us
 - macOS: `brew install jq`
 - Or see: https://jqlang.github.io/jq/download/
 
-**Option 1: Stream and view in real-time while saving to file**
+**Option 1: Using built-in file output**
+
+The easiest way is to use the built-in `--output-file` option:
+
+```bash
+# Fetch and save comments to file
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --output-file comments.json
+
+# In another terminal, view in real-time
+tail -F comments.json | ./viewer.sh
+```
+
+**Option 2: Stream and view in real-time while saving to file**
 
 ```bash
 TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
@@ -56,7 +103,7 @@ stdbuf -oL ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-ke
 | stdbuf -oL ./viewer.sh
 ```
 
-**Option 2: Save to file and view separately**
+**Option 3: Save to file and view separately**
 
 ```bash
 # Terminal 1: Fetch and save comments

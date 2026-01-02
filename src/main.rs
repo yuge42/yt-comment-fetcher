@@ -1,4 +1,6 @@
 use clap::Parser;
+use std::fs::OpenOptions;
+use std::io::Write;
 use tokio_stream::StreamExt;
 use yt_grpc_client::YouTubeClient;
 
@@ -6,9 +8,9 @@ use yt_grpc_client::YouTubeClient;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// YouTube video ID to fetch comments from
-    #[arg(long, required = true)]
-    video_id: String,
+    /// YouTube video ID to fetch comments from (optional when --resume is used)
+    #[arg(long)]
+    video_id: Option<String>,
 
     /// Path to file containing the API key for authentication
     #[arg(long)]
@@ -17,6 +19,14 @@ struct Args {
     /// Wait time in seconds before reconnecting after connection failure (default: 5)
     #[arg(long, default_value = "5")]
     reconnect_wait_secs: u64,
+
+    /// Path to output file where JSON messages will be written (one per line)
+    #[arg(long)]
+    output_file: Option<String>,
+
+    /// Resume streaming from the last message in the output file
+    #[arg(long)]
+    resume: bool,
 }
 
 /// Macro to attempt reconnection and restart stream
@@ -56,7 +66,7 @@ macro_rules! attempt_reconnect {
 
 /// Macro to handle stream messages (avoids code duplication)
 macro_rules! handle_stream_message {
-    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr) => {
+    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr, $output_file:expr) => {
         match $stream_result {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
@@ -69,7 +79,14 @@ macro_rules! handle_stream_message {
                 } else {
                     // Print message as JSON (non-delimited)
                     let json = serde_json::to_string(&message)?;
-                    println!("{}", json);
+
+                    // Write to file or stdout
+                    if let Some(ref mut file) = $output_file {
+                        writeln!(file, "{}", json)?;
+                        file.flush()?;
+                    } else {
+                        println!("{}", json);
+                    }
                 }
             }
             Some(Err(e)) => {
@@ -112,13 +129,76 @@ macro_rules! handle_stream_message {
     };
 }
 
+/// Read the last line from a file
+fn read_last_line(path: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use rev_lines::RevLines;
+    use std::io::BufReader;
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    let reader = BufReader::new(file);
+    let rev_lines = RevLines::new(reader);
+
+    // Get the first non-empty line from the end
+    for line in rev_lines {
+        let line = line?;
+        if !line.trim().is_empty() {
+            return Ok(Some(line));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Parse resume information from the last JSON line
+fn parse_resume_info(
+    json_line: &str,
+) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+    let value: serde_json::Value = serde_json::from_str(json_line)?;
+
+    // Extract live_chat_id from items[0].snippet.live_chat_id
+    // Try both snake_case (live_chat_id) and camelCase (liveChatId) for compatibility
+    let chat_id = value
+        .get("items")
+        .and_then(|items| items.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|item| item.get("snippet"))
+        .and_then(|snippet| {
+            snippet
+                .get("live_chat_id")
+                .or_else(|| snippet.get("liveChatId"))
+        })
+        .and_then(|id| id.as_str())
+        .map(|s| s.to_string());
+
+    // Extract next_page_token (try both snake_case and camelCase)
+    let next_page_token = value
+        .get("nextPageToken")
+        .or_else(|| value.get("next_page_token"))
+        .and_then(|token| token.as_str())
+        .map(|s| s.to_string());
+
+    Ok((chat_id, next_page_token))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    eprintln!("Using video ID: {}", args.video_id);
+    // Validate arguments
+    if !args.resume && args.video_id.is_none() {
+        return Err("Either --video-id or --resume must be specified".into());
+    }
 
-    // Read API key from file if provided
+    if args.resume && args.output_file.is_none() {
+        return Err("--output-file must be specified when using --resume".into());
+    }
+
+    // Read API key from file if provided (needed for both REST and gRPC)
     let api_key = if let Some(api_key_path) = &args.api_key_path {
         eprintln!("Reading API key from: {}", api_key_path);
         let key = std::fs::read_to_string(api_key_path)
@@ -130,16 +210,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Get REST API address from environment variable or use default
-    let rest_api_address = std::env::var("REST_API_ADDRESS")
-        .unwrap_or_else(|_| "https://www.googleapis.com".to_string());
+    // Open output file if specified
+    let mut output_file = if let Some(ref path) = args.output_file {
+        eprintln!("Output file: {}", path);
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .map_err(|e| format!("Failed to open output file '{}': {}", path, e))?,
+        )
+    } else {
+        None
+    };
 
-    eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
+    // Try to resume from file if requested
+    let (mut chat_id, initial_page_token) = if args.resume {
+        let output_path = args
+            .output_file
+            .as_ref()
+            .expect("output_file is guaranteed to be Some when resume is true");
+        eprintln!("Attempting to resume from: {}", output_path);
 
-    // Fetch the chat ID from the videos.list endpoint
-    let chat_id = fetch_chat_id(&rest_api_address, &args.video_id, api_key.as_deref()).await?;
+        match read_last_line(output_path)? {
+            Some(last_line) => {
+                eprintln!("Found last line, parsing resume info...");
+                match parse_resume_info(&last_line) {
+                    Ok((Some(cid), token)) => {
+                        eprintln!("Resuming with chat ID: {}", cid);
+                        if let Some(ref t) = token {
+                            eprintln!("Resuming from page token: {}", t);
+                        }
+                        (Some(cid), token)
+                    }
+                    Ok((None, _)) => {
+                        eprintln!("Could not extract chat ID from last line");
+                        (None, None)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse last line: {}", e);
+                        (None, None)
+                    }
+                }
+            }
+            None => {
+                eprintln!("Output file is empty or does not exist yet");
+                (None, None)
+            }
+        }
+    } else {
+        (None, None)
+    };
 
-    eprintln!("Got chat ID: {}", chat_id);
+    // If we don't have a chat_id from resume, fetch it using video_id
+    if chat_id.is_none() {
+        let video_id = args
+            .video_id
+            .as_ref()
+            .ok_or("video-id is required when not resuming or when resume fails to find chat ID")?;
+        eprintln!("Using video ID: {}", video_id);
+
+        // Get REST API address from environment variable or use default
+        let rest_api_address = std::env::var("REST_API_ADDRESS")
+            .unwrap_or_else(|_| "https://www.googleapis.com".to_string());
+
+        eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
+
+        // Fetch the chat ID from the videos.list endpoint
+        chat_id = Some(fetch_chat_id(&rest_api_address, video_id, api_key.as_deref()).await?);
+
+        eprintln!("Got chat ID: {}", chat_id.as_ref().unwrap());
+    }
+
+    let chat_id = chat_id.expect("chat_id is guaranteed to be Some at this point");
 
     // Get gRPC server address from environment variable or use default
     // Note: For TLS-enabled gRPC connections, tonic requires https:// prefix
@@ -158,13 +301,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to the gRPC server (fail fast if initial connection fails)
     let mut client = YouTubeClient::connect(server_url.clone(), api_key.clone()).await?;
 
-    // Stream comments using the retrieved chat ID (fail fast if stream setup fails)
-    let mut stream = client.stream_comments(Some(chat_id.clone()), None).await?;
+    // Stream comments using the retrieved chat ID and page token (if resuming)
+    let mut stream = client
+        .stream_comments(Some(chat_id.clone()), initial_page_token.clone())
+        .await?;
 
     eprintln!("Reconnect wait time: {} seconds", args.reconnect_wait_secs);
 
     // Track the next page token for pagination on reconnection
-    let mut next_page_token: Option<String> = None;
+    // Initialize with the resume token if we have one
+    let mut next_page_token: Option<String> = initial_page_token;
 
     // Track when we should attempt reconnection (None means we're connected)
     let mut reconnect_until: Option<tokio::time::Instant> = None;
@@ -215,7 +361,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             stream_result,
                             next_page_token,
                             reconnect_until,
-                            args.reconnect_wait_secs
+                            args.reconnect_wait_secs,
+                            output_file
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
@@ -270,7 +417,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             stream_result,
                             next_page_token,
                             reconnect_until,
-                            args.reconnect_wait_secs
+                            args.reconnect_wait_secs,
+                            output_file
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
