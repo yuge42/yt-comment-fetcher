@@ -164,6 +164,10 @@ async function startFetcherWithOptions(options = {}) {
     let errorOutput = '';
     let exitCode = null;
     let startupTimeout = null;
+    
+    // Initialize store values
+    getStore().put('stderrOutput', stderrOutput);
+    getStore().put('errorOutput', errorOutput);
 
     // Set up startup timeout for normal starts
     if (!expectFailure && captureStdout) {
@@ -211,6 +215,8 @@ async function startFetcherWithOptions(options = {}) {
       console.log(`Fetcher stderr: ${output}`);
       stderrOutput += output;
       errorOutput += output;
+      getStore().put('stderrOutput', stderrOutput);
+      getStore().put('errorOutput', errorOutput);
       
       // For output file mode, resolve on connection message
       if (outputFile && !expectFailure && startupTimeout) {
