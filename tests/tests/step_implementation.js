@@ -12,6 +12,33 @@ const CHECK_INTERVAL_MS = 500;
 const MIN_MESSAGES_FOR_AUTO_RESOLVE = 5;
 const SHUTDOWN_GRACE_PERIOD_MS = 1000;
 
+/**
+ * Generic polling helper that waits for a condition to be met
+ * @param {Object} options - Configuration options
+ * @param {Function} options.condition - Function that returns true when condition is met
+ * @param {number} options.maxWaitTimeMs - Maximum time to wait in milliseconds (default: MAX_WAIT_TIME_MS)
+ * @param {number} options.checkIntervalMs - Interval between checks in milliseconds (default: CHECK_INTERVAL_MS)
+ * @param {string} options.description - Description for logging purposes
+ * @returns {Promise<{elapsedTime: number, conditionMet: boolean}>}
+ */
+async function waitFor({ condition, maxWaitTimeMs = MAX_WAIT_TIME_MS, checkIntervalMs = CHECK_INTERVAL_MS, description = 'condition' }) {
+  return new Promise((resolve) => {
+    let elapsedTime = 0;
+    
+    const checkCondition = setInterval(() => {
+      elapsedTime += checkIntervalMs;
+      const conditionMet = condition();
+      
+      if (conditionMet || elapsedTime >= maxWaitTimeMs) {
+        clearInterval(checkCondition);
+        const status = conditionMet ? 'met' : 'timeout';
+        console.log(`Wait for ${description}: ${status} after ${elapsedTime}ms`);
+        resolve({ elapsedTime, conditionMet });
+      }
+    }, checkIntervalMs);
+  });
+}
+
 // Helper functions to access scenario data store
 function getStore() {
   return gauge.dataStore.scenarioStore;
@@ -252,21 +279,11 @@ step('Start the fetcher application', async function () {
 
 // Wait for fetcher to connect and receive messages
 step('Wait for fetcher to connect and receive messages', async function () {
-  return new Promise((resolve) => {
-    // Wait for messages to be received or timeout
-    let elapsedTime = 0;
-    
-    const checkMessages = setInterval(() => {
-      elapsedTime += CHECK_INTERVAL_MS;
-      const receivedLines = getReceivedLines();
-      
-      if (receivedLines.length >= MIN_MESSAGES_FOR_AUTO_RESOLVE || elapsedTime >= MAX_WAIT_TIME_MS) {
-        clearInterval(checkMessages);
-        console.log(`Received ${receivedLines.length} lines after ${elapsedTime}ms`);
-        resolve();
-      }
-    }, CHECK_INTERVAL_MS);
+  await waitFor({
+    condition: () => getReceivedLines().length >= MIN_MESSAGES_FOR_AUTO_RESOLVE,
+    description: 'fetcher to receive messages'
   });
+  console.log(`Received ${getReceivedLines().length} lines`);
 });
 
 // Verify fetcher outputs valid JSON stream
@@ -485,22 +502,12 @@ step('Wait for fetcher to reconnect and receive messages', async function () {
   const initialCount = getInitialMessageCount();
   console.log(`Waiting for new messages (initial count: ${initialCount})...`);
   
-  return new Promise((resolve) => {
-    let elapsedTime = 0;
-    const maxWaitTime = 15000; // 15 seconds to allow for reconnection
-    
-    const checkMessages = setInterval(() => {
-      elapsedTime += CHECK_INTERVAL_MS;
-      const currentLines = getReceivedLines();
-      
-      // Check if we received new messages after reconnection
-      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
-        clearInterval(checkMessages);
-        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
-        resolve();
-      }
-    }, CHECK_INTERVAL_MS);
+  await waitFor({
+    condition: () => getReceivedLines().length > initialCount,
+    maxWaitTimeMs: 15000, // 15 seconds to allow for reconnection
+    description: `new messages after reconnection (initial: ${initialCount})`
   });
+  console.log(`Current message count: ${getReceivedLines().length} (was: ${initialCount})`);
 });
 
 // Verify received new JSON messages after reconnection
@@ -678,22 +685,11 @@ step('Wait for fetcher to receive new messages', async function () {
   const initialCount = getInitialMessageCount();
   console.log(`Waiting for new messages (initial count: ${initialCount})...`);
   
-  return new Promise((resolve) => {
-    let elapsedTime = 0;
-    const maxWaitTime = 10000; // 10 seconds
-    
-    const checkMessages = setInterval(() => {
-      elapsedTime += CHECK_INTERVAL_MS;
-      const currentLines = getReceivedLines();
-      
-      // Check if we received new messages
-      if (currentLines.length > initialCount || elapsedTime >= maxWaitTime) {
-        clearInterval(checkMessages);
-        console.log(`Current message count: ${currentLines.length} (was: ${initialCount}) after ${elapsedTime}ms`);
-        resolve();
-      }
-    }, CHECK_INTERVAL_MS);
+  await waitFor({
+    condition: () => getReceivedLines().length > initialCount,
+    description: `new messages (initial: ${initialCount})`
   });
+  console.log(`Current message count: ${getReceivedLines().length} (was: ${initialCount})`);
 });
 
 // Wait for stream timeout to occur
@@ -902,33 +898,31 @@ step('Verify output file contains valid JSON lines', async function () {
 // Verify file contains at least N JSON messages
 step('Verify file contains at least <count> JSON messages', async function (count) {
   const expectedCount = parseInt(count, 10);
+  const outputFilePath = getOutputFilePath();
   
-  return new Promise((resolve) => {
-    let elapsedTime = 0;
-    
-    const checkFileContent = setInterval(() => {
-      elapsedTime += CHECK_INTERVAL_MS;
-      
-      const outputFilePath = getOutputFilePath();
-      if (fs.existsSync(outputFilePath)) {
-        const fileContent = fs.readFileSync(outputFilePath, 'utf8');
-        const lines = fileContent.split('\n').filter(line => line.trim().length > 0);
-        
-        if (lines.length >= expectedCount || elapsedTime >= MAX_WAIT_TIME_MS) {
-          clearInterval(checkFileContent);
-          assert.ok(
-            lines.length >= expectedCount,
-            `Expected at least ${expectedCount} messages but got ${lines.length}`
-          );
-          console.log(`Verified file contains ${lines.length} messages (expected at least ${expectedCount})`);
-          resolve();
-        }
-      } else if (elapsedTime >= MAX_WAIT_TIME_MS) {
-        clearInterval(checkFileContent);
-        throw new Error(`Output file does not exist after ${MAX_WAIT_TIME_MS}ms`);
-      }
-    }, CHECK_INTERVAL_MS);
+  const getFileLineCount = () => {
+    if (fs.existsSync(outputFilePath)) {
+      const fileContent = fs.readFileSync(outputFilePath, 'utf8');
+      return fileContent.split('\n').filter(line => line.trim().length > 0).length;
+    }
+    return 0;
+  };
+  
+  const result = await waitFor({
+    condition: () => getFileLineCount() >= expectedCount,
+    description: `file to contain at least ${expectedCount} messages`
   });
+  
+  const finalCount = getFileLineCount();
+  assert.ok(
+    fs.existsSync(outputFilePath),
+    `Output file does not exist after ${result.elapsedTime}ms`
+  );
+  assert.ok(
+    finalCount >= expectedCount,
+    `Expected at least ${expectedCount} messages but got ${finalCount}`
+  );
+  console.log(`Verified file contains ${finalCount} messages (expected at least ${expectedCount})`);
 });
 
 // Clean up temporary output file
