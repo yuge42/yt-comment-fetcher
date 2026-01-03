@@ -202,13 +202,16 @@ fn parse_resume_info(
     Ok((chat_id, next_page_token))
 }
 
-/// Helper function to refresh OAuth token if needed
-async fn refresh_oauth_token_if_needed(oauth_manager: &mut Option<OAuthManager>) -> Option<String> {
+/// Get a valid OAuth access token from the manager.
+///
+/// This should be called before each API request to ensure the token hasn't expired.
+/// The manager automatically refreshes the token if needed.
+async fn get_valid_oauth_token(oauth_manager: &mut Option<OAuthManager>) -> Option<String> {
     if let Some(manager) = oauth_manager {
         match manager.get_access_token().await {
             Ok(token) => Some(token),
             Err(e) => {
-                eprintln!("Failed to refresh OAuth token: {}", e);
+                eprintln!("Failed to get valid OAuth token: {}", e);
                 None
             }
         }
@@ -458,13 +461,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
-                        // Refresh OAuth token if needed before reconnecting
-                        let oauth_token_refreshed = refresh_oauth_token_if_needed(&mut oauth_manager).await;
+                        // Get valid OAuth token before reconnecting
+                        let oauth_token = get_valid_oauth_token(&mut oauth_manager).await;
 
                         attempt_reconnect!(
                             server_url,
                             api_key,
-                            oauth_token_refreshed,
+                            oauth_token,
                             chat_id,
                             next_page_token,
                             stream,
@@ -526,13 +529,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
-                        // Refresh OAuth token if needed before reconnecting
-                        let oauth_token_refreshed = refresh_oauth_token_if_needed(&mut oauth_manager).await;
+                        // Get valid OAuth token before reconnecting
+                        let oauth_token = get_valid_oauth_token(&mut oauth_manager).await;
 
                         attempt_reconnect!(
                             server_url,
                             api_key,
-                            oauth_token_refreshed,
+                            oauth_token,
                             chat_id,
                             next_page_token,
                             stream,
