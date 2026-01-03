@@ -88,71 +88,132 @@ step('API key path from environment variable <envVar>', async function (envVar) 
   }
 });
 
-// Start the fetcher application
-step('Start the fetcher application', async function () {
+/**
+ * Unified helper function to start the fetcher process with various options
+ * @param {Object} options - Configuration options for starting the fetcher
+ * @param {string} options.videoId - Video ID argument (optional, omit to test without video ID)
+ * @param {boolean} options.skipApiKey - Whether to skip API key from store (default: false)
+ * @param {string} options.reconnectWaitSecs - Reconnect wait time in seconds (optional)
+ * @param {string} options.outputFile - Output file path (optional)
+ * @param {boolean} options.resume - Whether to use resume flag (default: false)
+ * @param {boolean} options.captureStdout - Whether to capture stdout lines (default: true unless outputFile is set)
+ * @returns {Promise} Resolves when fetcher starts or fails
+ */
+async function startFetcherWithOptions(options = {}) {
+  const {
+    videoId = 'test-video-1',
+    skipApiKey = false,
+    reconnectWaitSecs = null,
+    outputFile = null,
+    resume = false,
+    captureStdout = !outputFile
+  } = options;
+
   return new Promise((resolve, reject) => {
-    setReceivedLines([]);
+    if (captureStdout) {
+      setReceivedLines([]);
+    }
     
-    // Determine the binary path - assuming it's built in target/debug or target/release
     const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
     
-    console.log(`Starting fetcher from: ${binaryPath}`);
+    const description = resume ? 'with resume' :
+                        outputFile ? 'with output file' :
+                        reconnectWaitSecs ? `with reconnect wait time ${reconnectWaitSecs}s` :
+                        !videoId ? 'without video ID' :
+                        skipApiKey ? 'without API key' : '';
+    console.log(`Starting fetcher from: ${binaryPath} ${description}`);
     
-    // Spawn the fetcher process
-    // The fetcher reads SERVER_ADDRESS from environment if we want to pass it
     const env = Object.assign({}, process.env);
     const serverAddress = getServerAddress();
     if (serverAddress) {
       env.SERVER_ADDRESS = serverAddress;
     }
     
-    // Pass the video ID as named argument
-    const args = ['--video-id', 'test-video-1'];
+    // Build arguments
+    const args = [];
+    if (videoId) {
+      args.push('--video-id', videoId);
+    }
+    if (reconnectWaitSecs) {
+      args.push('--reconnect-wait-secs', reconnectWaitSecs);
+    }
+    if (outputFile) {
+      args.push('--output-file', outputFile);
+    }
+    if (resume) {
+      args.push('--resume');
+    }
     
-    // Add API key path if available
     const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
+    if (!skipApiKey && apiKeyPath) {
       args.push('--api-key-path', apiKeyPath);
       console.log(`Using API key from: ${apiKeyPath}`);
     }
     
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
+    if (args.length > 0) {
+      console.log(`Starting with args: ${args.join(' ')}`);
+    }
     
+    const fetcherProcess = spawn(binaryPath, args, { env: env });
     setFetcherProcess(fetcherProcess);
 
-    // Initialize stderr output capture
     let stderrOutput = '';
+    let errorOutput = '';
+    let exitCode = null;
+    let startupTimeout = null;
+    
+    // Initialize store values
     getStore().put('stderrOutput', stderrOutput);
+    getStore().put('errorOutput', errorOutput);
 
-    let startupTimeout = setTimeout(() => {
+    // Set up startup timeout - always use shorter timeout for processes that exit quickly
+    // or longer timeout for processes that should keep running
+    const timeoutMs = captureStdout ? STARTUP_TIMEOUT_MS : (outputFile ? STARTUP_TIMEOUT_MS : 3000);
+    startupTimeout = setTimeout(() => {
       console.log('Fetcher started (timeout reached)');
       resolve();
-    }, STARTUP_TIMEOUT_MS);
+    }, timeoutMs);
 
-    fetcherProcess.stdout.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
-      const receivedLines = getReceivedLines();
-      lines.forEach(line => {
-        console.log(`Fetcher stdout: ${line}`);
-        receivedLines.push(line);
+    if (captureStdout) {
+      fetcherProcess.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
+        const receivedLines = getReceivedLines();
+        lines.forEach(line => {
+          console.log(`Fetcher stdout: ${line}`);
+          receivedLines.push(line);
+        });
+        setReceivedLines(receivedLines);
+        
+        // Once we start receiving data, resolve the startup promise
+        if (receivedLines.length > 0 && startupTimeout) {
+          clearTimeout(startupTimeout);
+          startupTimeout = null;
+          resolve();
+        }
       });
-      setReceivedLines(receivedLines);
-      
-      // Once we start receiving data, resolve the startup promise
-      if (receivedLines.length > 0 && startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-        resolve();
-      }
-    });
+    } else {
+      fetcherProcess.stdout.on('data', (data) => {
+        console.log(`Fetcher stdout: ${data}`);
+      });
+    }
 
     fetcherProcess.stderr.on('data', (data) => {
       const output = data.toString();
       console.log(`Fetcher stderr: ${output}`);
       stderrOutput += output;
+      errorOutput += output;
       getStore().put('stderrOutput', stderrOutput);
+      getStore().put('errorOutput', errorOutput);
+      
+      // For output file mode, resolve on connection message
+      if (outputFile && startupTimeout) {
+        if (stderrOutput.includes('Connecting to gRPC server') || 
+            stderrOutput.includes('Resuming')) {
+          clearTimeout(startupTimeout);
+          startupTimeout = null;
+          resolve();
+        }
+      }
     });
 
     fetcherProcess.on('error', (error) => {
@@ -161,12 +222,31 @@ step('Start the fetcher application', async function () {
         clearTimeout(startupTimeout);
         startupTimeout = null;
       }
+      // Always reject on spawn errors
       reject(new Error(`Failed to start fetcher: ${error.message}`));
     });
 
     fetcherProcess.on('close', (code) => {
+      exitCode = code;
       console.log(`Fetcher process exited with code ${code}`);
+      getStore().put('exitCode', exitCode);
+      getStore().put('errorOutput', errorOutput);
+      getStore().put('stderrOutput', stderrOutput);
+      
+      // Always resolve on process close - caller can check exit code
+      if (startupTimeout) {
+        clearTimeout(startupTimeout);
+        startupTimeout = null;
+      }
+      resolve();
     });
+  });
+}
+
+// Start the fetcher application
+step('Start the fetcher application', async function () {
+  return startFetcherWithOptions({
+    videoId: 'test-video-1'
   });
 });
 
@@ -276,112 +356,15 @@ step('Stop the fetcher application', async function () {
 
 // Start the fetcher application without video ID argument
 step('Start the fetcher application without video ID argument', async function () {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    
-    console.log(`Starting fetcher without video ID from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    // No arguments - should fail
-    const args = [];
-    
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
-    
-    setFetcherProcess(fetcherProcess);
-
-    let exitCode = null;
-    let errorOutput = '';
-
-    fetcherProcess.stdout.on('data', (data) => {
-      console.log(`Fetcher stdout: ${data}`);
-    });
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      errorOutput += output;
-    });
-
-    fetcherProcess.on('close', (code) => {
-      exitCode = code;
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', exitCode);
-      getStore().put('errorOutput', errorOutput);
-      resolve();
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
+  return startFetcherWithOptions({
+    videoId: null
   });
 });
 
 // Start the fetcher application with invalid video ID
 step('Start the fetcher application with invalid video ID <videoId>', async function (videoId) {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    
-    console.log(`Starting fetcher with invalid video ID from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    const args = ['--video-id', videoId];
-    
-    // Add API key path if available (needed when auth is enabled)
-    const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
-    }
-    
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
-    
-    setFetcherProcess(fetcherProcess);
-
-    let errorOutput = '';
-
-    fetcherProcess.stdout.on('data', (data) => {
-      console.log(`Fetcher stdout: ${data}`);
-    });
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      errorOutput += output;
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', code);
-      getStore().put('errorOutput', errorOutput);
-      resolve();
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-    
-    // Give it time to start and fail
-    setTimeout(resolve, 3000);
+  return startFetcherWithOptions({
+    videoId: videoId
   });
 });
 
@@ -421,54 +404,9 @@ step('Verify fetcher exits with error about video not found', async function () 
 
 // Start the fetcher application without API key
 step('Start the fetcher application without API key', async function () {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    
-    console.log(`Starting fetcher without API key from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    // Pass the video ID but NOT the API key
-    const args = ['--video-id', 'test-video-1'];
-    
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
-    
-    setFetcherProcess(fetcherProcess);
-
-    let errorOutput = '';
-
-    fetcherProcess.stdout.on('data', (data) => {
-      console.log(`Fetcher stdout: ${data}`);
-    });
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      errorOutput += output;
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', code);
-      getStore().put('errorOutput', errorOutput);
-      resolve();
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-    
-    // Give it time to start and fail
-    setTimeout(resolve, 3000);
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    skipApiKey: true
   });
 });
 
@@ -492,80 +430,9 @@ step('Verify fetcher exits with authentication error', async function () {
 
 // Start the fetcher application with reconnect wait time
 step('Start the fetcher application with reconnect wait time <waitSeconds> seconds', async function (waitSeconds) {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    
-    console.log(`Starting fetcher with reconnect wait time ${waitSeconds}s from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    // Pass the video ID and reconnect wait time
-    const args = ['--video-id', 'test-video-1', '--reconnect-wait-secs', waitSeconds];
-    
-    // Add API key path if available
-    const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
-    }
-    
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
-    
-    setFetcherProcess(fetcherProcess);
-
-    let startupTimeout = setTimeout(() => {
-      console.log('Fetcher started (timeout reached)');
-      resolve();
-    }, STARTUP_TIMEOUT_MS);
-
-    // Store all stderr output for later verification
-    let stderrOutput = '';
-    getStore().put('stderrOutput', stderrOutput);
-
-    fetcherProcess.stdout.on('data', (data) => {
-      const lines = data.toString().split('\n').filter(line => line.trim().length > 0);
-      const receivedLines = getReceivedLines();
-      lines.forEach(line => {
-        console.log(`Fetcher stdout: ${line}`);
-        receivedLines.push(line);
-      });
-      setReceivedLines(receivedLines);
-      
-      // Once we start receiving data, resolve the startup promise
-      if (receivedLines.length > 0 && startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-        resolve();
-      }
-    });
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      stderrOutput += output;
-      getStore().put('stderrOutput', stderrOutput);
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      if (startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-      }
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-    });
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    reconnectWaitSecs: waitSeconds
   });
 });
 
@@ -664,64 +531,8 @@ step('Verify reconnect wait time is <seconds> seconds in logs', async function (
 
 // Start the fetcher application and expect failure
 step('Start the fetcher application and expect failure', async function () {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    
-    console.log(`Starting fetcher expecting failure from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    // Pass the video ID
-    const args = ['--video-id', 'test-video-1'];
-    
-    // Add API key path if available
-    const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
-    }
-    
-    const fetcherProcess = spawn(binaryPath, args, {
-      env: env
-    });
-    
-    setFetcherProcess(fetcherProcess);
-
-    let errorOutput = '';
-    let stderrOutput = '';
-
-    fetcherProcess.stdout.on('data', (data) => {
-      console.log(`Fetcher stdout: ${data}`);
-    });
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      errorOutput += output;
-      stderrOutput += output;
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', code);
-      getStore().put('errorOutput', errorOutput);
-      getStore().put('stderrOutput', stderrOutput);
-      resolve();
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-    
-    // Give it time to start and fail
-    setTimeout(resolve, 3000);
+  return startFetcherWithOptions({
+    videoId: 'test-video-1'
   });
 });
 
@@ -1053,67 +864,11 @@ step('Create a temporary output file', async function () {
 
 // Start the fetcher application with output file
 step('Start the fetcher application with output file', async function () {
-  return new Promise((resolve, reject) => {
-    setReceivedLines([]);
-    
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    console.log(`Starting fetcher from: ${binaryPath}`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    const outputFilePath = getOutputFilePath();
-    const args = ['--video-id', 'test-video-1', '--output-file', outputFilePath];
-    
-    const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
-    }
-    
-    console.log(`Starting with args: ${args.join(' ')}`);
-    
-    const fetcherProcess = spawn(binaryPath, args, { env: env });
-    setFetcherProcess(fetcherProcess);
-
-    let stderrOutput = '';
-    getStore().put('stderrOutput', stderrOutput);
-
-    let startupTimeout = setTimeout(() => {
-      console.log('Fetcher started (timeout reached)');
-      resolve();
-    }, STARTUP_TIMEOUT_MS);
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      stderrOutput += output;
-      getStore().put('stderrOutput', stderrOutput);
-      
-      // Resolve once we see connection messages
-      if (stderrOutput.includes('Connecting to gRPC server') && startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-        resolve();
-      }
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      if (startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-      }
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', code);
-    });
+  const outputFilePath = getOutputFilePath();
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    outputFile: outputFilePath,
+    captureStdout: false
   });
 });
 
@@ -1196,65 +951,12 @@ step('Count messages in output file', async function () {
 
 // Start the fetcher application with resume flag
 step('Start the fetcher application with resume flag', async function () {
-  return new Promise((resolve, reject) => {
-    const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
-    console.log(`Starting fetcher from: ${binaryPath} with resume`);
-    
-    const env = Object.assign({}, process.env);
-    const serverAddress = getServerAddress();
-    if (serverAddress) {
-      env.SERVER_ADDRESS = serverAddress;
-    }
-    
-    const outputFilePath = getOutputFilePath();
-    const args = ['--output-file', outputFilePath, '--resume'];
-    
-    const apiKeyPath = getApiKeyPath();
-    if (apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
-    }
-    
-    console.log(`Starting with args: ${args.join(' ')}`);
-    
-    const fetcherProcess = spawn(binaryPath, args, { env: env });
-    setFetcherProcess(fetcherProcess);
-
-    let stderrOutput = '';
-    getStore().put('stderrOutput', stderrOutput);
-
-    let startupTimeout = setTimeout(() => {
-      console.log('Fetcher started with resume (timeout reached)');
-      resolve();
-    }, STARTUP_TIMEOUT_MS);
-
-    fetcherProcess.stderr.on('data', (data) => {
-      const output = data.toString();
-      console.log(`Fetcher stderr: ${output}`);
-      stderrOutput += output;
-      getStore().put('stderrOutput', stderrOutput);
-      
-      // Resolve once we see resume or connection messages
-      if ((stderrOutput.includes('Resuming') || stderrOutput.includes('Connecting to gRPC server')) && startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-        resolve();
-      }
-    });
-
-    fetcherProcess.on('error', (error) => {
-      console.error(`Failed to start fetcher: ${error.message}`);
-      if (startupTimeout) {
-        clearTimeout(startupTimeout);
-        startupTimeout = null;
-      }
-      reject(new Error(`Failed to start fetcher: ${error.message}`));
-    });
-
-    fetcherProcess.on('close', (code) => {
-      console.log(`Fetcher process exited with code ${code}`);
-      getStore().put('exitCode', code);
-    });
+  const outputFilePath = getOutputFilePath();
+  return startFetcherWithOptions({
+    videoId: null, // Not required when resuming
+    outputFile: outputFilePath,
+    resume: true,
+    captureStdout: false
   });
 });
 
