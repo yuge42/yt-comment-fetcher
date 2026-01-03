@@ -85,13 +85,16 @@ The easiest way is to use the built-in `--output-file` option:
 
 ```bash
 # Fetch and save comments to file
+TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
+
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --api-key-path api-key.txt \
-  --output-file comments.json
+  --output-file $TARGET_FILE \
+  --resume
 
 # In another terminal, view in real-time
-tail -F comments.json | ./viewer.sh
+tail -F $(ls -t "$HOME/yt-comments/"*.ndjson | head -n 1) | ./viewer.sh
 ```
 
 **Option 2: Stream and view in real-time while saving to file**
@@ -100,19 +103,6 @@ tail -F comments.json | ./viewer.sh
 TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
 stdbuf -oL ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt \
 | tee $TARGET_FILE \
-| stdbuf -oL ./viewer.sh
-```
-
-**Option 3: Save to file and view separately**
-
-```bash
-# Terminal 1: Fetch and save comments
-TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
-./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt >> $TARGET_FILE
-
-# Terminal 2 (or add & to previous command): View comments in real-time
-latest=$(ls -t "$HOME/yt-comments/"*.ndjson | head -n 1)
-stdbuf -oL tail -F $latest \
 | stdbuf -oL ./viewer.sh
 ```
 
