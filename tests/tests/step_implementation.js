@@ -1014,9 +1014,20 @@ step('Start the fetcher application with both API key and OAuth token', async fu
   // Create a temporary API key file
   const apiKeyPath = path.join(tempDir, 'test-api-key.txt');
   fs.writeFileSync(apiKeyPath, 'test-api-key');
+  setApiKeyPath(apiKeyPath);
   
   // Create a temporary OAuth token path (doesn't need to exist)
   const oauthTokenPath = path.join(tempDir, 'test-oauth-token.json');
+  
+  console.log('Starting fetcher with both API key and OAuth token');
+  
+  // Use startFetcherWithOptions but override with custom args
+  const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+  const env = Object.assign({}, process.env);
+  const serverAddress = getServerAddress();
+  if (serverAddress) {
+    env.SERVER_ADDRESS = serverAddress;
+  }
   
   const args = [
     '--video-id', 'test-video-1',
@@ -1024,12 +1035,27 @@ step('Start the fetcher application with both API key and OAuth token', async fu
     '--oauth-token-path', oauthTokenPath
   ];
   
-  console.log('Starting fetcher with both API key and OAuth token');
-  startFetcherProcess(args);
+  const fetcherProcess = spawn(binaryPath, args, { env });
+  setFetcherProcess(fetcherProcess);
+  
+  let stderrOutput = '';
+  
+  fetcherProcess.stderr.on('data', (data) => {
+    stderrOutput += data.toString();
+  });
+  
+  fetcherProcess.on('exit', (code) => {
+    getStore().put('exitCode', code);
+    getStore().put('stderrOutput', stderrOutput);
+    setFetcherProcess(null);
+  });
   
   // Store paths for cleanup
   getStore().put('apiKeyPath', apiKeyPath);
   getStore().put('oauthTokenPath', oauthTokenPath);
+  
+  // Wait a bit for process to start
+  await new Promise(resolve => setTimeout(resolve, 1000));
 });
 
 step('Verify fetcher exits with mutual exclusivity error', async function () {
@@ -1041,8 +1067,8 @@ step('Verify fetcher exits with mutual exclusivity error', async function () {
   
   assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when both auth methods provided');
   
-  const stderr = getStderr();
-  const exitCode = getExitCode();
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
   
   console.log('Fetcher stderr:', stderr);
   console.log('Fetcher exit code:', exitCode);
@@ -1074,16 +1100,40 @@ step('Start the fetcher application with OAuth token path but no client credenti
     fs.unlinkSync(oauthTokenPath);
   }
   
+  console.log('Starting fetcher with OAuth token path but no client credentials');
+  
+  const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+  const env = Object.assign({}, process.env);
+  const serverAddress = getServerAddress();
+  if (serverAddress) {
+    env.SERVER_ADDRESS = serverAddress;
+  }
+  
   const args = [
     '--video-id', 'test-video-1',
     '--oauth-token-path', oauthTokenPath
     // Intentionally not providing --oauth-client-id or --oauth-client-secret
   ];
   
-  console.log('Starting fetcher with OAuth token path but no client credentials');
-  startFetcherProcess(args);
+  const fetcherProcess = spawn(binaryPath, args, { env });
+  setFetcherProcess(fetcherProcess);
+  
+  let stderrOutput = '';
+  
+  fetcherProcess.stderr.on('data', (data) => {
+    stderrOutput += data.toString();
+  });
+  
+  fetcherProcess.on('exit', (code) => {
+    getStore().put('exitCode', code);
+    getStore().put('stderrOutput', stderrOutput);
+    setFetcherProcess(null);
+  });
   
   getStore().put('oauthTokenPath', oauthTokenPath);
+  
+  // Wait a bit for process to start
+  await new Promise(resolve => setTimeout(resolve, 1000));
 });
 
 step('Verify fetcher exits with missing client ID error', async function () {
@@ -1095,8 +1145,8 @@ step('Verify fetcher exits with missing client ID error', async function () {
   
   assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when client credentials missing');
   
-  const stderr = getStderr();
-  const exitCode = getExitCode();
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
   
   console.log('Fetcher stderr:', stderr);
   console.log('Fetcher exit code:', exitCode);
