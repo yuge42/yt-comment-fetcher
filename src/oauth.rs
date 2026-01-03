@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Default OAuth callback port
+const OAUTH_CALLBACK_PORT: u16 = 8080;
+
 /// OAuth 2.0 token information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
@@ -75,7 +78,7 @@ impl OAuthConfig {
         Self {
             client_id,
             client_secret,
-            redirect_uri: "http://localhost:8080/oauth2callback".to_string(),
+            redirect_uri: format!("http://localhost:{}/oauth2callback", OAUTH_CALLBACK_PORT),
             scope: "https://www.googleapis.com/auth/youtube.force-ssl".to_string(),
         }
     }
@@ -197,14 +200,15 @@ impl OAuthManager {
     fn generate_pkce() -> (String, String) {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use rand::Rng;
+        use rand::distributions::Alphanumeric;
         use sha2::{Digest, Sha256};
 
-        // Generate random verifier (43-128 characters)
-        let verifier: String = (0..64)
-            .map(|_| {
-                let idx = rand::random::<usize>() % 62;
-                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"[idx] as char
-            })
+        // Generate random verifier (43-128 characters) using cryptographically secure RNG
+        let verifier: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(64)
+            .map(char::from)
             .collect();
 
         // Generate challenge: base64url(SHA256(verifier))
@@ -374,7 +378,8 @@ impl OAuthManager {
         let app = Router::new().route("/oauth2callback", get(callback_handler));
 
         // Start server
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await?;
+        let listener =
+            tokio::net::TcpListener::bind(format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT)).await?;
         let server = axum::serve(listener, app);
 
         // Run server until we get a code

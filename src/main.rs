@@ -202,6 +202,32 @@ fn parse_resume_info(
     Ok((chat_id, next_page_token))
 }
 
+/// Helper function to refresh OAuth token if needed
+async fn refresh_oauth_token_if_needed(oauth_manager: &mut Option<OAuthManager>) -> Option<String> {
+    if let Some(manager) = oauth_manager {
+        match manager.get_access_token().await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                eprintln!("Failed to refresh OAuth token: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+/// Helper function to save OAuth token to file
+fn save_oauth_token(oauth_manager: &Option<OAuthManager>, token_path: &Option<String>) {
+    if let Some(manager) = oauth_manager {
+        if let Some(path) = token_path {
+            if let Err(e) = manager.save_token(path) {
+                eprintln!("Warning: Failed to save refreshed OAuth token: {}", e);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -242,9 +268,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if token_file_exists {
             // Load existing token
+            // Client credentials are optional when token exists, but recommended for refresh
             eprintln!("Loading OAuth token from: {}", oauth_token_path);
             let client_id = args.oauth_client_id.clone().unwrap_or_default();
             let client_secret = args.oauth_client_secret.clone().unwrap_or_default();
+
+            // Warn if credentials not provided (refresh will fail)
+            if client_id.is_empty() || client_secret.is_empty() {
+                eprintln!(
+                    "Warning: OAuth client credentials not provided. Token refresh will not work."
+                );
+            }
+
             let config = OAuthConfig::new(client_id, client_secret);
             let mut manager = OAuthManager::new(config);
             manager.load_token(oauth_token_path)?;
@@ -424,17 +459,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         reconnect_until = None;
 
                         // Refresh OAuth token if needed before reconnecting
-                        let oauth_token_refreshed = if let Some(ref mut manager) = oauth_manager {
-                            match manager.get_access_token().await {
-                                Ok(token) => Some(token),
-                                Err(e) => {
-                                    eprintln!("Failed to refresh OAuth token: {}", e);
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        };
+                        let oauth_token_refreshed = refresh_oauth_token_if_needed(&mut oauth_manager).await;
 
                         attempt_reconnect!(
                             server_url,
@@ -448,15 +473,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
 
                         // Save refreshed token if using OAuth
-                        if oauth_manager.is_some() {
-                            if let Some(ref path) = oauth_token_path_str {
-                                if let Some(ref manager) = oauth_manager {
-                                    if let Err(e) = manager.save_token(path) {
-                                        eprintln!("Warning: Failed to save refreshed OAuth token: {}", e);
-                                    }
-                                }
-                            }
-                        }
+                        save_oauth_token(&oauth_manager, &oauth_token_path_str);
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
@@ -510,17 +527,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         reconnect_until = None;
 
                         // Refresh OAuth token if needed before reconnecting
-                        let oauth_token_refreshed = if let Some(ref mut manager) = oauth_manager {
-                            match manager.get_access_token().await {
-                                Ok(token) => Some(token),
-                                Err(e) => {
-                                    eprintln!("Failed to refresh OAuth token: {}", e);
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        };
+                        let oauth_token_refreshed = refresh_oauth_token_if_needed(&mut oauth_manager).await;
 
                         attempt_reconnect!(
                             server_url,
@@ -534,15 +541,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
 
                         // Save refreshed token if using OAuth
-                        if oauth_manager.is_some() {
-                            if let Some(ref path) = oauth_token_path_str {
-                                if let Some(ref manager) = oauth_manager {
-                                    if let Err(e) = manager.save_token(path) {
-                                        eprintln!("Warning: Failed to save refreshed OAuth token: {}", e);
-                                    }
-                                }
-                            }
-                        }
+                        save_oauth_token(&oauth_manager, &oauth_token_path_str);
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
