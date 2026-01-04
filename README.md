@@ -151,13 +151,6 @@ If the fetcher is interrupted, you can resume from where it left off using the `
   --oauth-client-secret YOUR_CLIENT_SECRET
 ```
 
-# Resume with OAuth
-./target/release/yt-comment-fetcher \
-  --output-file comments.json \
-  --resume \
-  --oauth-token-path oauth-token.json
-```
-
 The `--resume` flag:
 - Reads the last line from the output file
 - Extracts the chat ID and pagination token
