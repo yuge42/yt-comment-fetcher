@@ -1,11 +1,9 @@
-mod oauth;
-
 use clap::Parser;
-use oauth::{OAuthConfig, OAuthManager};
 use std::fs::OpenOptions;
 use std::io::Write;
 use tokio_stream::StreamExt;
 use yt_grpc_client::YouTubeClient;
+use yt_oauth::{OAuthConfig, OAuthManager};
 
 /// YouTube Live Comment Fetcher - Streams live chat messages from YouTube videos
 #[derive(Parser, Debug)]
@@ -266,51 +264,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Using OAuth authentication");
         oauth_token_path_str = Some(oauth_token_path.clone());
 
-        // Try to load existing token
+        // Check if token file exists
         let token_file_exists = std::path::Path::new(oauth_token_path).exists();
 
-        if token_file_exists {
-            // Load existing token
-            // Client credentials are optional when token exists, but recommended for refresh
-            eprintln!("Loading OAuth token from: {}", oauth_token_path);
-            let client_id = args.oauth_client_id.clone().unwrap_or_default();
-            let client_secret = args.oauth_client_secret.clone().unwrap_or_default();
-
-            // Warn if credentials not provided (refresh will fail)
-            if client_id.is_empty() || client_secret.is_empty() {
-                eprintln!(
-                    "Warning: OAuth client credentials not provided. Token refresh will not work."
-                );
-            }
-
-            let config = OAuthConfig::new(client_id, client_secret);
-            let mut manager = OAuthManager::new(config);
-            manager.load_token(oauth_token_path)?;
-            oauth_manager = Some(manager);
-        } else {
-            // Need to authorize - require client ID and secret
-            let client_id = args
-                .oauth_client_id
-                .as_ref()
-                .ok_or("--oauth-client-id required when OAuth token file does not exist")?;
-            let client_secret = args
-                .oauth_client_secret
-                .as_ref()
-                .ok_or("--oauth-client-secret required when OAuth token file does not exist")?;
-
-            eprintln!("OAuth token file not found, starting authorization flow...");
-            let config = OAuthConfig::new(client_id.clone(), client_secret.clone());
-            let mut manager = OAuthManager::new(config);
-
-            // Start OAuth flow
-            manager.start_auth_flow().await?;
-
-            // Save token
-            manager.save_token(oauth_token_path)?;
-            eprintln!("OAuth token saved to: {}", oauth_token_path);
-
-            oauth_manager = Some(manager);
+        if !token_file_exists {
+            // Token file doesn't exist - guide user to use helper binary
+            eprintln!("\n=================================================");
+            eprintln!("OAuth token file not found: {}", oauth_token_path);
+            eprintln!("=================================================");
+            eprintln!("\nTo obtain an OAuth token, please run the helper tool:\n");
+            eprintln!("  yt-oauth-helper \\");
+            eprintln!("    --client-id YOUR_CLIENT_ID \\");
+            eprintln!("    --client-secret YOUR_CLIENT_SECRET \\");
+            eprintln!("    --token-path {}\n", oauth_token_path);
+            eprintln!("After obtaining the token, run this command again.");
+            eprintln!("=================================================\n");
+            return Err(
+                "OAuth token file not found. Use yt-oauth-helper to obtain a token.".into(),
+            );
         }
+
+        // Load existing token
+        // Client credentials are required for token refresh
+        let client_id = args
+            .oauth_client_id
+            .as_ref()
+            .ok_or("--oauth-client-id required for OAuth token refresh")?;
+        let client_secret = args
+            .oauth_client_secret
+            .as_ref()
+            .ok_or("--oauth-client-secret required for OAuth token refresh")?;
+
+        eprintln!("Loading OAuth token from: {}", oauth_token_path);
+        let config = OAuthConfig::new(client_id.clone(), client_secret.clone());
+        let mut manager = OAuthManager::new(config);
+        manager.load_token(oauth_token_path)?;
+        oauth_manager = Some(manager);
 
         None // No API key when using OAuth
     } else {

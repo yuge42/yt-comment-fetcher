@@ -2178,19 +2178,15 @@ dependencies = [
 name = "yt-comment-fetcher"
 version = "0.1.0"
 dependencies = [
- "axum",
- "base64",
  "clap",
- "rand 0.8.5",
  "reqwest",
  "rev_lines",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
  "tokio-stream",
- "urlencoding",
  "yt-grpc-client",
+ "yt-oauth",
 ]
 
 [[package]]
@@ -2203,6 +2199,22 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "yt-oauth"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64",
+ "clap",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "urlencoding",
 ]
 
 [[package]]
