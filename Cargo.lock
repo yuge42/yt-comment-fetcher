@@ -2207,7 +2207,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64",
- "clap",
  "rand 0.8.5",
  "reqwest",
  "serde",

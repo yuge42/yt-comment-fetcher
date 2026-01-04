@@ -8,10 +8,6 @@ repository.workspace = true
 authors.workspace = true
 description = "OAuth 2.0 authentication library for YouTube Data API"
 
-[[bin]]
-name = "yt-oauth-helper"
-path = "src/bin/helper.rs"
-
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,4 +18,3 @@ sha2 = { workspace = true }
 base64 = { workspace = true }
 rand = { workspace = true }
 urlencoding = { workspace = true }
-clap = { workspace = true }
