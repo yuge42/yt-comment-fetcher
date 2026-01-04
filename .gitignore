@@ -27,3 +27,8 @@ key
 key.txt
 api-key
 api-key.txt
+
+# OAuth token files
+oauth-token.json
+oauth-token*.json
+*-token.json

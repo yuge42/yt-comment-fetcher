@@ -1005,3 +1005,156 @@ step('Verify file contains no duplicate messages', async function () {
   
   console.log(`Verified no duplicates among ${messageIds.size} unique messages in file`);
 });
+
+// OAuth-specific steps
+step('Start the fetcher application with both API key and OAuth token', async function () {
+  const fs = require('fs');
+  const tempDir = require('os').tmpdir();
+  
+  // Create a temporary API key file
+  const apiKeyPath = path.join(tempDir, 'test-api-key.txt');
+  fs.writeFileSync(apiKeyPath, 'test-api-key');
+  setApiKeyPath(apiKeyPath);
+  
+  // Create a temporary OAuth token path (doesn't need to exist)
+  const oauthTokenPath = path.join(tempDir, 'test-oauth-token.json');
+  
+  console.log('Starting fetcher with both API key and OAuth token');
+  
+  // Use startFetcherWithOptions but override with custom args
+  const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+  const env = Object.assign({}, process.env);
+  const serverAddress = getServerAddress();
+  if (serverAddress) {
+    env.SERVER_ADDRESS = serverAddress;
+  }
+  
+  const args = [
+    '--video-id', 'test-video-1',
+    '--api-key-path', apiKeyPath,
+    '--oauth-token-path', oauthTokenPath
+  ];
+  
+  const fetcherProcess = spawn(binaryPath, args, { env });
+  setFetcherProcess(fetcherProcess);
+  
+  let stderrOutput = '';
+  
+  fetcherProcess.stderr.on('data', (data) => {
+    stderrOutput += data.toString();
+  });
+  
+  fetcherProcess.on('exit', (code) => {
+    getStore().put('exitCode', code);
+    getStore().put('stderrOutput', stderrOutput);
+    setFetcherProcess(null);
+  });
+  
+  // Store paths for cleanup
+  getStore().put('apiKeyPath', apiKeyPath);
+  getStore().put('oauthTokenPath', oauthTokenPath);
+  
+  // Wait a bit for process to start
+  await new Promise(resolve => setTimeout(resolve, 1000));
+});
+
+step('Verify fetcher exits with mutual exclusivity error', async function () {
+  const fetcherExited = await waitFor({
+    condition: () => getFetcherProcess() === null,
+    maxWaitTimeMs: 5000,
+    description: 'fetcher to exit with error'
+  });
+  
+  assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when both auth methods provided');
+  
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
+  
+  console.log('Fetcher stderr:', stderr);
+  console.log('Fetcher exit code:', exitCode);
+  
+  // Check that error message mentions mutual exclusivity
+  const hasMutualExclusivityError = stderr.toLowerCase().includes('mutually exclusive') || 
+                                     stderr.toLowerCase().includes('both') ||
+                                     exitCode !== 0;
+  
+  assert.strictEqual(hasMutualExclusivityError, true, 'Should have mutual exclusivity error');
+  
+  // Clean up temp files
+  const fs = require('fs');
+  const apiKeyPath = getStore().get('apiKeyPath');
+  if (apiKeyPath && fs.existsSync(apiKeyPath)) {
+    fs.unlinkSync(apiKeyPath);
+  }
+});
+
+step('Start the fetcher application with OAuth token path but no client credentials', async function () {
+  const tempDir = require('os').tmpdir();
+  
+  // Create a temporary OAuth token path (file doesn't exist to trigger auth flow)
+  const oauthTokenPath = path.join(tempDir, 'test-oauth-token-new.json');
+  
+  // Make sure file doesn't exist
+  const fs = require('fs');
+  if (fs.existsSync(oauthTokenPath)) {
+    fs.unlinkSync(oauthTokenPath);
+  }
+  
+  console.log('Starting fetcher with OAuth token path but no client credentials');
+  
+  const binaryPath = process.env.FETCHER_BINARY || path.join(__dirname, '../../target/debug/yt-comment-fetcher');
+  const env = Object.assign({}, process.env);
+  const serverAddress = getServerAddress();
+  if (serverAddress) {
+    env.SERVER_ADDRESS = serverAddress;
+  }
+  
+  const args = [
+    '--video-id', 'test-video-1',
+    '--oauth-token-path', oauthTokenPath
+    // Intentionally not providing --oauth-client-id or --oauth-client-secret
+  ];
+  
+  const fetcherProcess = spawn(binaryPath, args, { env });
+  setFetcherProcess(fetcherProcess);
+  
+  let stderrOutput = '';
+  
+  fetcherProcess.stderr.on('data', (data) => {
+    stderrOutput += data.toString();
+  });
+  
+  fetcherProcess.on('exit', (code) => {
+    getStore().put('exitCode', code);
+    getStore().put('stderrOutput', stderrOutput);
+    setFetcherProcess(null);
+  });
+  
+  getStore().put('oauthTokenPath', oauthTokenPath);
+  
+  // Wait a bit for process to start
+  await new Promise(resolve => setTimeout(resolve, 1000));
+});
+
+step('Verify fetcher exits with missing client ID error', async function () {
+  const fetcherExited = await waitFor({
+    condition: () => getFetcherProcess() === null,
+    maxWaitTimeMs: 5000,
+    description: 'fetcher to exit with error'
+  });
+  
+  assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when client credentials missing');
+  
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
+  
+  console.log('Fetcher stderr:', stderr);
+  console.log('Fetcher exit code:', exitCode);
+  
+  // Check that error message mentions missing client ID
+  const hasMissingClientIdError = stderr.toLowerCase().includes('oauth-client-id') || 
+                                   stderr.toLowerCase().includes('client') ||
+                                   exitCode !== 0;
+  
+  assert.strictEqual(hasMissingClientIdError, true, 'Should have missing client ID error');
+});

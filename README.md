@@ -14,7 +14,11 @@ The binary will be available at `target/release/yt-comment-fetcher`.
 
 ### Running in Production
 
-The application connects to the official YouTube API by default. You need a YouTube Data API key to use it.
+The application connects to the official YouTube API by default. You can authenticate using either an API key or OAuth 2.0.
+
+#### Option 1: API Key Authentication
+
+Use an API key for simple, public data access:
 
 ```bash
 # Create an API key file
@@ -23,6 +27,84 @@ echo "YOUR_API_KEY" > api-key.txt
 # Run the fetcher
 ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt
 ```
+
+#### Option 2: OAuth 2.0 Authentication (Recommended)
+
+OAuth 2.0 is required for accessing private live chats or when API quotas are a concern. The OAuth functionality is separated into two components:
+- **yt-oauth-helper**: A helper tool for initial authorization (one-time setup)
+- **yt-comment-fetcher**: Automatically refreshes tokens during streaming
+
+**Step 1: Set up OAuth credentials**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select an existing one
+3. Enable the YouTube Data API v3
+4. Go to "Credentials" > "Create credentials" > "OAuth client ID"
+5. Choose application type (Desktop app recommended for this CLI tool)
+6. Set authorized redirect URI to: `http://localhost:8080/oauth2callback`
+7. Download the client ID and client secret
+
+**Step 2: Obtain OAuth token (first time only)**
+
+Use the helper tool to complete the initial authorization:
+
+```bash
+# Build the project first
+cargo build --release
+
+# Run the OAuth helper tool
+./target/release/yt-oauth-helper \
+  --client-id YOUR_CLIENT_ID \
+  --client-secret YOUR_CLIENT_SECRET \
+  --token-path oauth-token.json
+```
+
+The helper tool will:
+1. Display an authorization URL in the terminal
+2. Start a local callback server on port 8080
+3. Wait for you to authorize the application in your browser
+4. Exchange the authorization code for tokens
+5. Save the tokens to `oauth-token.json` with secure permissions (600)
+
+**Step 3: Stream comments with OAuth**
+
+Once you have the token file, use it with the main fetcher:
+
+```bash
+# Run with OAuth token (client credentials required for token refresh)
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id YOUR_CLIENT_ID \
+  --oauth-client-secret YOUR_CLIENT_SECRET
+```
+
+The fetcher will:
+- Load the token from the file
+- Automatically refresh the access token when expired
+- Update the token file with the refreshed token
+- Stream comments continuously
+
+**OAuth Token File Format:**
+
+The token file is stored as JSON with secure permissions (owner read/write only):
+
+```json
+{
+  "access_token": "ya29.xxx...",
+  "refresh_token": "1//xxx...",
+  "token_type": "Bearer",
+  "expires_at": 1234567890
+}
+```
+
+**Note:** 
+- API key and OAuth are mutually exclusive - use one or the other
+- The access token expires after ~1 hour but is automatically refreshed by the fetcher
+- The refresh token is long-lived and persists in the token file
+- Client credentials are required for token refresh - always provide them when using OAuth
+- Keep your token file secure - it grants access to your YouTube account
+- Use `yt-oauth-helper` only once to obtain the initial token; the fetcher handles all subsequent refreshes
 
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
@@ -34,10 +116,18 @@ The application will:
 You can save comments directly to a file using the `--output-file` option:
 
 ```bash
-# Save comments to a file (one JSON object per line)
+# With API key
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --api-key-path api-key.txt \
+  --output-file comments.json
+
+# With OAuth
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id YOUR_CLIENT_ID \
+  --oauth-client-secret YOUR_CLIENT_SECRET \
   --output-file comments.json
 ```
 
@@ -46,11 +136,19 @@ You can save comments directly to a file using the `--output-file` option:
 If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag:
 
 ```bash
-# Resume streaming from the last message in the file
+# Resume with API key
 ./target/release/yt-comment-fetcher \
   --output-file comments.json \
   --resume \
   --api-key-path api-key.txt
+
+# Resume with OAuth
+./target/release/yt-comment-fetcher \
+  --output-file comments.json \
+  --resume \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id YOUR_CLIENT_ID \
+  --oauth-client-secret YOUR_CLIENT_SECRET
 ```
 
 The `--resume` flag:
