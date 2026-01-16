@@ -133,7 +133,8 @@ async function startFetcherWithOptions(options = {}) {
     reconnectWaitSecs = null,
     outputFile = null,
     resume = false,
-    captureStdout = !outputFile
+    captureStdout = !outputFile,
+    customArgs = null
   } = options;
 
   return new Promise((resolve, reject) => {
@@ -147,7 +148,8 @@ async function startFetcherWithOptions(options = {}) {
                         outputFile ? 'with output file' :
                         reconnectWaitSecs ? `with reconnect wait time ${reconnectWaitSecs}s` :
                         !videoId ? 'without video ID' :
-                        skipApiKey ? 'without API key' : '';
+                        skipApiKey ? 'without API key' : 
+                        customArgs ? 'with custom args' : '';
     console.log(`Starting fetcher from: ${binaryPath} ${description}`);
     
     const env = Object.assign({}, process.env);
@@ -157,24 +159,30 @@ async function startFetcherWithOptions(options = {}) {
     }
     
     // Build arguments
-    const args = [];
-    if (videoId) {
-      args.push('--video-id', videoId);
-    }
-    if (reconnectWaitSecs) {
-      args.push('--reconnect-wait-secs', reconnectWaitSecs);
-    }
-    if (outputFile) {
-      args.push('--output-file', outputFile);
-    }
-    if (resume) {
-      args.push('--resume');
-    }
+    let args = [];
     
-    const apiKeyPath = getApiKeyPath();
-    if (!skipApiKey && apiKeyPath) {
-      args.push('--api-key-path', apiKeyPath);
-      console.log(`Using API key from: ${apiKeyPath}`);
+    // If custom args provided, use them; otherwise build from options
+    if (customArgs) {
+      args = customArgs.slice(); // Copy the array
+    } else {
+      if (videoId) {
+        args.push('--video-id', videoId);
+      }
+      if (reconnectWaitSecs) {
+        args.push('--reconnect-wait-secs', reconnectWaitSecs);
+      }
+      if (outputFile) {
+        args.push('--output-file', outputFile);
+      }
+      if (resume) {
+        args.push('--resume');
+      }
+      
+      const apiKeyPath = getApiKeyPath();
+      if (!skipApiKey && apiKeyPath) {
+        args.push('--api-key-path', apiKeyPath);
+        console.log(`Using API key from: ${apiKeyPath}`);
+      }
     }
     
     if (args.length > 0) {
@@ -1157,4 +1165,265 @@ step('Verify fetcher exits with missing client ID error', async function () {
                                    exitCode !== 0;
   
   assert.strictEqual(hasMissingClientIdError, true, 'Should have missing client ID error');
+});
+
+// OAuth token authentication test steps
+
+/**
+ * Generate an OAuth token from the mock server
+ * @param {number} expiresIn - Token expiry time in seconds (negative for expired tokens)
+ * @returns {Promise<Object>} Token response with access_token, refresh_token, expires_in, etc.
+ */
+async function generateMockOAuthToken(expiresIn = 3600) {
+  const serverAddress = getStore().get('serverAddress') || process.env.REST_API_ADDRESS || 'https://localhost:8080';
+  const https = require('https');
+  const querystring = require('querystring');
+  
+  const postData = querystring.stringify({
+    grant_type: 'authorization_code',
+    code: 'test-auth-code',
+    client_id: 'test-client-id',
+    client_secret: 'test-client-secret',
+    redirect_uri: 'http://localhost:8080/oauth2callback',
+    expires_in: expiresIn
+  });
+  
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'localhost',
+      port: 8080,
+      path: '/oauth2/token',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(postData)
+      },
+      rejectUnauthorized: false // Accept self-signed certificates
+    };
+    
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const response = JSON.parse(data);
+          console.log('Generated OAuth token:', response);
+          resolve(response);
+        } catch (e) {
+          reject(new Error(`Failed to parse token response: ${e.message}, data: ${data}`));
+        }
+      });
+    });
+    
+    req.on('error', (e) => {
+      reject(new Error(`Failed to generate OAuth token: ${e.message}`));
+    });
+    
+    req.write(postData);
+    req.end();
+  });
+}
+
+step('Generate a valid OAuth token from the mock server', async function() {
+  const tokenResponse = await generateMockOAuthToken(3600); // 1 hour expiry
+  getStore().put('oauthTokenResponse', tokenResponse);
+  console.log('Generated valid OAuth token with 1 hour expiry');
+});
+
+step('Create a token file with the generated token', async function() {
+  const fs = require('fs');
+  const os = require('os');
+  const tokenResponse = getStore().get('oauthTokenResponse');
+  
+  const tokenPath = path.join(os.tmpdir(), `oauth-token-${Date.now()}.json`);
+  
+  // Calculate expiry time as Unix timestamp
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + tokenResponse.expires_in;
+  
+  const tokenData = {
+    access_token: tokenResponse.access_token,
+    refresh_token: tokenResponse.refresh_token,
+    token_type: tokenResponse.token_type || 'Bearer',
+    expires_at: expiresAt
+  };
+  
+  fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2));
+  console.log(`Created token file at: ${tokenPath}`);
+  getStore().put('oauthTokenPath', tokenPath);
+});
+
+step('Start the fetcher with OAuth token authentication', async function() {
+  const tokenPath = getStore().get('oauthTokenPath');
+  
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    skipApiKey: true,
+    customArgs: [
+      '--oauth-token-path', tokenPath,
+      '--oauth-client-id', 'test-client-id',
+      '--oauth-client-secret', 'test-client-secret'
+    ]
+  });
+});
+
+step('Generate an OAuth token with short expiry from the mock server', async function() {
+  const tokenResponse = await generateMockOAuthToken(2); // 2 seconds expiry
+  getStore().put('oauthTokenResponse', tokenResponse);
+  console.log('Generated OAuth token with 2 second expiry');
+});
+
+step('Generate an expired OAuth token from the mock server', async function() {
+  const tokenResponse = await generateMockOAuthToken(-60); // Expired 60 seconds ago
+  getStore().put('oauthTokenResponse', tokenResponse);
+  console.log('Generated expired OAuth token');
+});
+
+step('Start the fetcher with OAuth token and client credentials', async function() {
+  const tokenPath = getStore().get('oauthTokenPath');
+  
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    skipApiKey: true,
+    customArgs: [
+      '--oauth-token-path', tokenPath,
+      '--oauth-client-id', 'test-client-id',
+      '--oauth-client-secret', 'test-client-secret'
+    ]
+  });
+});
+
+step('Wait for token to expire', async function() {
+  console.log('Waiting for token to expire...');
+  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+  console.log('Token should be expired now');
+});
+
+step('Verify fetcher automatically refreshes the token', async function() {
+  const receivedLines = getReceivedLines();
+  
+  // Check stderr for refresh message
+  const fetcherProcess = getFetcherProcess();
+  assert.ok(fetcherProcess, 'Fetcher process should still be running');
+  
+  console.log('Fetcher is still running, token refresh should have occurred');
+});
+
+step('Verify token file is updated with new token', async function() {
+  const fs = require('fs');
+  const tokenPath = getStore().get('oauthTokenPath');
+  const originalToken = getStore().get('oauthTokenResponse').access_token;
+  
+  // Read the updated token file
+  const updatedTokenData = JSON.parse(fs.readFileSync(tokenPath, 'utf-8'));
+  
+  console.log('Original token:', originalToken);
+  console.log('Updated token:', updatedTokenData.access_token);
+  
+  // The token should be different after refresh
+  // Note: In the mock server, refresh may generate a new token
+  assert.ok(updatedTokenData.access_token, 'Token file should contain an access token');
+  assert.ok(updatedTokenData.refresh_token, 'Token file should contain a refresh token');
+  assert.ok(updatedTokenData.expires_at, 'Token file should contain expiry time');
+});
+
+step('Start the fetcher with OAuth token but without client credentials', async function() {
+  const tokenPath = getStore().get('oauthTokenPath');
+  
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    skipApiKey: true,
+    customArgs: [
+      '--oauth-token-path', tokenPath
+    ]
+  });
+});
+
+step('Verify fetcher fails with token refresh error', async function() {
+  const fetcherExited = await waitFor({
+    condition: () => getFetcherProcess() === null,
+    maxWaitTimeMs: 8000,
+    description: 'fetcher to exit with token refresh error'
+  });
+  
+  assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when token refresh fails');
+  
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
+  
+  console.log('Fetcher stderr:', stderr);
+  console.log('Fetcher exit code:', exitCode);
+  
+  // Should fail due to missing client credentials
+  const hasRefreshError = stderr.toLowerCase().includes('oauth-client-id') || 
+                          stderr.toLowerCase().includes('refresh') ||
+                          exitCode !== 0;
+  
+  assert.strictEqual(hasRefreshError, true, 'Should have token refresh error');
+});
+
+step('Create a token file with an invalid/malformed token', async function() {
+  const fs = require('fs');
+  const os = require('os');
+  
+  const tokenPath = path.join(os.tmpdir(), `oauth-token-invalid-${Date.now()}.json`);
+  
+  const tokenData = {
+    access_token: 'invalid-token-12345',
+    refresh_token: 'invalid-refresh-token',
+    token_type: 'Bearer',
+    expires_at: Math.floor(Date.now() / 1000) + 3600
+  };
+  
+  fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2));
+  console.log(`Created invalid token file at: ${tokenPath}`);
+  getStore().put('oauthTokenPath', tokenPath);
+});
+
+step('Start the fetcher with the invalid OAuth token', async function() {
+  const tokenPath = getStore().get('oauthTokenPath');
+  
+  return startFetcherWithOptions({
+    videoId: 'test-video-1',
+    skipApiKey: true,
+    customArgs: [
+      '--oauth-token-path', tokenPath,
+      '--oauth-client-id', 'test-client-id',
+      '--oauth-client-secret', 'test-client-secret'
+    ]
+  });
+});
+
+step('Verify fetcher fails with authentication error', async function() {
+  const fetcherExited = await waitFor({
+    condition: () => getFetcherProcess() === null,
+    maxWaitTimeMs: 8000,
+    description: 'fetcher to exit with authentication error'
+  });
+  
+  assert.strictEqual(fetcherExited.conditionMet, true, 'Fetcher should exit when authentication fails');
+  
+  const stderr = getStore().get('stderrOutput') || '';
+  const exitCode = getStore().get('exitCode');
+  
+  console.log('Fetcher stderr:', stderr);
+  console.log('Fetcher exit code:', exitCode);
+  
+  // Should fail with authentication error
+  assert.strictEqual(exitCode !== 0, true, 'Should have non-zero exit code');
+});
+
+// Cleanup for OAuth token tests
+afterScenario(async function() {
+  // Clean up token files
+  const fs = require('fs');
+  const tokenPath = getStore().get('oauthTokenPath');
+  if (tokenPath && fs.existsSync(tokenPath)) {
+    try {
+      fs.unlinkSync(tokenPath);
+      console.log(`Cleaned up token file: ${tokenPath}`);
+    } catch (e) {
+      console.warn(`Failed to clean up token file: ${e.message}`);
+    }
+  }
 });

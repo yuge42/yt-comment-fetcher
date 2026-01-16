@@ -2,7 +2,7 @@ services:
   # YouTube API Mock Server
   # Repository: https://github.com/yuge42/yt-api-mock
   yt-api-mock:
-    image: ghcr.io/yuge42/yt-api-mock/server:dev-391db47
+    image: ghcr.io/yuge42/yt-api-mock:0.2.0
     ports:
       - "50051:50051"
       - "8080:8080"
@@ -12,5 +12,6 @@ services:
       - TLS_CERT_PATH=/certs/server-cert.pem
       - TLS_KEY_PATH=/certs/server-key.pem
       - CHAT_STREAM_TIMEOUT=5
+      - REQUIRE_AUTH=true
     volumes:
       - ./certs:/certs:ro
