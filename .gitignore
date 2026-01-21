@@ -32,3 +32,6 @@ api-key.txt
 oauth-token.json
 oauth-token*.json
 *-token.json
+
+# Google Cloud OAuth client secret files
+client_secret_*.json

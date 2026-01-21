@@ -48,16 +48,40 @@ OAuth 2.0 is required for accessing private live chats or when API quotas are a 
 
 Use the helper tool to complete the initial authorization:
 
+**Step 2: Obtain OAuth token (first time only)**
+
+Use the helper tool to complete the initial authorization:
+
 ```bash
 # Build the project first
 cargo build --release
 
-# Run the OAuth helper tool
+# Option 1: Using client_secret JSON file from Google Cloud Console
+./target/release/yt-oauth-helper \
+  --client-id path/to/client_secret_xxx.json \
+  --token-path oauth-token.json
+
+# Option 2: Using client ID and secret directly
 ./target/release/yt-oauth-helper \
   --client-id YOUR_CLIENT_ID \
   --client-secret YOUR_CLIENT_SECRET \
   --token-path oauth-token.json
 ```
+
+**Note:** When you download OAuth credentials from Google Cloud Console, they come in a JSON file
+named `client_secret_xxx.json` with the following structure:
+```json
+{
+  "installed": {
+    "client_id": "YOUR_CLIENT_ID",
+    "client_secret": "YOUR_CLIENT_SECRET",
+    ...
+  }
+}
+```
+
+You can pass the path to this file directly to `--client-id`, and the helper will automatically
+extract the credentials. This is more convenient than copying the values manually.
 
 The helper tool will:
 1. Display an authorization URL in the terminal
