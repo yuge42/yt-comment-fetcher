@@ -1,4 +1,6 @@
 use clap::Parser;
+use serde::Deserialize;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use tokio_stream::StreamExt;
@@ -21,11 +23,12 @@ struct Args {
     #[arg(long)]
     oauth_token_path: Option<String>,
 
-    /// OAuth client ID (required when using OAuth without existing token)
+    /// OAuth client ID or path to client_secret JSON file from Google Cloud Console
+    /// (required for OAuth token refresh)
     #[arg(long)]
     oauth_client_id: Option<String>,
 
-    /// OAuth client secret (required when using OAuth without existing token)
+    /// OAuth client secret (not required if --oauth-client-id is a JSON file path)
     #[arg(long)]
     oauth_client_secret: Option<String>,
 
@@ -40,6 +43,76 @@ struct Args {
     /// Resume streaming from the last message in the output file
     #[arg(long)]
     resume: bool,
+}
+
+/// Structure for parsing Google Cloud OAuth client secret JSON file
+#[derive(Deserialize, Debug)]
+struct ClientSecretFile {
+    installed: Option<InstalledApp>,
+    web: Option<WebApp>,
+}
+
+#[derive(Deserialize, Debug)]
+struct InstalledApp {
+    client_id: String,
+    client_secret: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct WebApp {
+    client_id: String,
+    client_secret: String,
+}
+
+/// Load client credentials from JSON file or use provided values
+/// Returns (client_id, client_secret) tuple
+fn load_oauth_credentials(
+    client_id_arg: Option<&str>,
+    client_secret_arg: Option<&str>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let client_id_str = client_id_arg.ok_or(
+        "--oauth-client-id is required when using OAuth (can be a path to client_secret JSON file)",
+    )?;
+
+    // Check if client_id_arg is a file path
+    if std::path::Path::new(client_id_str).exists() {
+        eprintln!("Loading OAuth credentials from file: {}", client_id_str);
+
+        let file_content = fs::read_to_string(client_id_str).map_err(|e| {
+            format!(
+                "Failed to read client secret file '{}': {}",
+                client_id_str, e
+            )
+        })?;
+
+        let client_secret_file: ClientSecretFile =
+            serde_json::from_str(&file_content).map_err(|e| {
+                format!(
+                    "Failed to parse client secret JSON file '{}': {}",
+                    client_id_str, e
+                )
+            })?;
+
+        // Try to get credentials from 'installed' field first, then 'web'
+        if let Some(installed) = client_secret_file.installed {
+            eprintln!("Using credentials from 'installed' application type");
+            return Ok((installed.client_id, installed.client_secret));
+        } else if let Some(web) = client_secret_file.web {
+            eprintln!("Using credentials from 'web' application type");
+            return Ok((web.client_id, web.client_secret));
+        } else {
+            return Err(
+                "Client secret JSON file must contain either 'installed' or 'web' field".into(),
+            );
+        }
+    }
+
+    // Otherwise, use the provided client_id and client_secret arguments
+    let client_secret = client_secret_arg.ok_or(
+        "--oauth-client-secret is required when --oauth-client-id is not a JSON file path",
+    )?;
+
+    Ok((client_id_str.to_string(), client_secret.to_string()))
 }
 
 /// Macro to attempt reconnection and restart stream
@@ -286,17 +359,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Load existing token
         // Client credentials are required for token refresh
-        let client_id = args
-            .oauth_client_id
-            .as_ref()
-            .ok_or("--oauth-client-id required for OAuth token refresh")?;
-        let client_secret = args
-            .oauth_client_secret
-            .as_ref()
-            .ok_or("--oauth-client-secret required for OAuth token refresh")?;
+        let (client_id, client_secret) = load_oauth_credentials(
+            args.oauth_client_id.as_deref(),
+            args.oauth_client_secret.as_deref(),
+        )?;
 
         eprintln!("Loading OAuth token from: {}", oauth_token_path);
-        let config = OAuthConfig::new(client_id.clone(), client_secret.clone());
+        eprintln!("Client ID: {}", client_id);
+        let config = OAuthConfig::new(client_id, client_secret);
         let mut manager = OAuthManager::new(config);
         manager.load_token(oauth_token_path)?;
         oauth_manager = Some(manager);

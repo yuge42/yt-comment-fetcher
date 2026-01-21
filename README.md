@@ -95,13 +95,22 @@ The helper tool will:
 Once you have the token file, use it with the main fetcher:
 
 ```bash
-# Run with OAuth token (client credentials required for token refresh)
+# Option 1: Using client_secret JSON file (recommended)
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id path/to/client_secret_xxx.json
+
+# Option 2: Using client credentials directly
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --oauth-token-path oauth-token.json \
   --oauth-client-id YOUR_CLIENT_ID \
   --oauth-client-secret YOUR_CLIENT_SECRET
 ```
+
+**Note:** Client credentials are required for automatic token refresh. You can use the same
+`client_secret_xxx.json` file for both the helper tool and the main fetcher.
 
 The fetcher will:
 - Load the token from the file
