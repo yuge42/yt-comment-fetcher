@@ -159,8 +159,7 @@ You can save comments directly to a file using the `--output-file` option:
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --oauth-token-path oauth-token.json \
-  --oauth-client-id YOUR_CLIENT_ID \
-  --oauth-client-secret YOUR_CLIENT_SECRET \
+  --oauth-client-id path/to/client_secret_xxx.json \
   --output-file comments.json
 ```
 
@@ -218,8 +217,9 @@ The easiest way is to use the built-in `--output-file` option:
 # Fetch and save comments to file
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
-  --api-key-path api-key.txt \
-  --output-file comments.json
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id path/to/client_secret_xxx.json \
+  --resume
 
 # In another terminal, view in real-time
 tail -F comments.json | ./viewer.sh
