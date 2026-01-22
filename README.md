@@ -215,14 +215,17 @@ The easiest way is to use the built-in `--output-file` option:
 
 ```bash
 # Fetch and save comments to file
+TARGET_FILE=$HOME/yt-comments/$(date +%Y%m%d_%H%M%S).ndjson
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --oauth-token-path oauth-token.json \
   --oauth-client-id path/to/client_secret_xxx.json \
-  --resume
+  --resume \
+  --output-file $TARGET_FILE
 
 # In another terminal, view in real-time
-tail -F comments.json | ./viewer.sh
+latest=$(ls -t "$HOME/yt-comments/"*.ndjson | head -n 1)
+tail -F $latest | ./viewer.sh
 ```
 
 **Option 2: Stream and view in real-time while saving to file**
