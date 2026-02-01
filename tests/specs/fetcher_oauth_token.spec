@@ -2,10 +2,11 @@
 
 This specification tests OAuth 2.0 token authentication and refresh functionality using the mock server's pseudo token generation feature.
 
-**Prerequisites**: The mock server (v0.2.0+) must be running with `REQUIRE_AUTH=true` to enable OAuth token validation.
+**Prerequisites**: The mock server (v0.3.0+) must be running with `REQUIRE_AUTH=true` to enable OAuth token validation.
 
 * Server address from environment variable "SERVER_ADDRESS" or default "https://localhost:8080"
 * Mock server has OAuth2 token generation endpoint at `/oauth2/token`
+* Mock server v0.3.0+ rejects tokens starting with `invalid-` prefix
 
 ## Test OAuth token authentication with valid token
 
@@ -45,9 +46,9 @@ This test verifies that the fetcher fails appropriately when the token is expire
 
 ## Test OAuth token validation with invalid token
 
-This test verifies that the fetcher handles authentication failures with invalid tokens.
+This test verifies that the fetcher handles authentication failures with invalid tokens (tokens with 'invalid-' prefix are rejected by mock server v0.3.0+).
 
-* Create a token file with an invalid/malformed token
+* Create a token file with an invalid token starting with invalid- prefix
 * Start the fetcher with the invalid OAuth token
 * Wait for fetcher to attempt connection
 * Verify fetcher fails with authentication error

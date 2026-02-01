@@ -1362,21 +1362,22 @@ step('Verify fetcher fails with token refresh error', async function() {
   assert.strictEqual(hasRefreshError, true, 'Should have token refresh error');
 });
 
-step('Create a token file with an invalid/malformed token', async function() {
+step('Create a token file with an invalid token starting with invalid- prefix', async function() {
   const fs = require('fs');
   const os = require('os');
   
   const tokenPath = path.join(os.tmpdir(), `oauth-token-invalid-${Date.now()}.json`);
   
+  // Use invalid- prefix as required by mock server v0.3.0+
   const tokenData = {
     access_token: 'invalid-token-12345',
-    refresh_token: 'invalid-refresh-token',
+    refresh_token: 'invalid-refresh-token-67890',
     token_type: 'Bearer',
     expires_at: Math.floor(Date.now() / 1000) + 3600
   };
   
   fs.writeFileSync(tokenPath, JSON.stringify(tokenData, null, 2));
-  console.log(`Created invalid token file at: ${tokenPath}`);
+  console.log(`Created invalid token file at: ${tokenPath} with token: ${tokenData.access_token}`);
   getStore().put('oauthTokenPath', tokenPath);
 });
 
@@ -1411,6 +1412,24 @@ step('Verify fetcher fails with authentication error', async function() {
   
   // Should fail with authentication error
   assert.strictEqual(exitCode !== 0, true, 'Should have non-zero exit code');
+});
+
+step('Verify appropriate error message is displayed', async function() {
+  const stderr = getStore().get('stderrOutput') || '';
+  const stdout = getStore().get('stdoutOutput') || '';
+  const combinedOutput = stderr + stdout;
+  
+  console.log('Verifying error message in output...');
+  console.log('stderr:', stderr);
+  console.log('stdout:', stdout);
+  
+  // Check for authentication/authorization error indicators
+  const hasAuthError = combinedOutput.toLowerCase().includes('auth') || 
+                       combinedOutput.toLowerCase().includes('token') ||
+                       combinedOutput.toLowerCase().includes('permission') ||
+                       combinedOutput.toLowerCase().includes('credential');
+  
+  assert.strictEqual(hasAuthError, true, 'Should display an appropriate authentication error message');
 });
 
 // Cleanup for OAuth token tests
