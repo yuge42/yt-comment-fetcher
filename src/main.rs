@@ -1,8 +1,11 @@
 use clap::Parser;
+use serde::Deserialize;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use tokio_stream::StreamExt;
 use yt_grpc_client::YouTubeClient;
+use yt_oauth::{OAuthConfig, OAuthManager};
 
 /// YouTube Live Comment Fetcher - Streams live chat messages from YouTube videos
 #[derive(Parser, Debug)]
@@ -15,6 +18,19 @@ struct Args {
     /// Path to file containing the API key for authentication
     #[arg(long)]
     api_key_path: Option<String>,
+
+    /// Path to OAuth token file (mutually exclusive with --api-key-path)
+    #[arg(long)]
+    oauth_token_path: Option<String>,
+
+    /// OAuth client ID or path to client_secret JSON file from Google Cloud Console
+    /// (required for OAuth token refresh)
+    #[arg(long)]
+    oauth_client_id: Option<String>,
+
+    /// OAuth client secret (not required if --oauth-client-id is a JSON file path)
+    #[arg(long)]
+    oauth_client_secret: Option<String>,
 
     /// Wait time in seconds before reconnecting after connection failure (default: 5)
     #[arg(long, default_value = "5")]
@@ -29,11 +45,83 @@ struct Args {
     resume: bool,
 }
 
+/// Structure for parsing Google Cloud OAuth client secret JSON file
+#[derive(Deserialize, Debug)]
+struct ClientSecretFile {
+    installed: Option<InstalledApp>,
+    web: Option<WebApp>,
+}
+
+#[derive(Deserialize, Debug)]
+struct InstalledApp {
+    client_id: String,
+    client_secret: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct WebApp {
+    client_id: String,
+    client_secret: String,
+}
+
+/// Load client credentials from JSON file or use provided values
+/// Returns (client_id, client_secret) tuple
+fn load_oauth_credentials(
+    client_id_arg: Option<&str>,
+    client_secret_arg: Option<&str>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let client_id_str = client_id_arg.ok_or(
+        "--oauth-client-id is required when using OAuth (can be a path to client_secret JSON file)",
+    )?;
+
+    // Check if client_id_arg is a file path
+    if std::path::Path::new(client_id_str).exists() {
+        eprintln!("Loading OAuth credentials from file: {}", client_id_str);
+
+        let file_content = fs::read_to_string(client_id_str).map_err(|e| {
+            format!(
+                "Failed to read client secret file '{}': {}",
+                client_id_str, e
+            )
+        })?;
+
+        let client_secret_file: ClientSecretFile =
+            serde_json::from_str(&file_content).map_err(|e| {
+                format!(
+                    "Failed to parse client secret JSON file '{}': {}",
+                    client_id_str, e
+                )
+            })?;
+
+        // Try to get credentials from 'installed' field first, then 'web'
+        if let Some(installed) = client_secret_file.installed {
+            eprintln!("Using credentials from 'installed' application type");
+            return Ok((installed.client_id, installed.client_secret));
+        } else if let Some(web) = client_secret_file.web {
+            eprintln!("Using credentials from 'web' application type");
+            return Ok((web.client_id, web.client_secret));
+        } else {
+            return Err(
+                "Client secret JSON file must contain either 'installed' or 'web' field".into(),
+            );
+        }
+    }
+
+    // Otherwise, use the provided client_id and client_secret arguments
+    let client_secret = client_secret_arg.ok_or(
+        "--oauth-client-secret is required when --oauth-client-id is not a JSON file path",
+    )?;
+
+    Ok((client_id_str.to_string(), client_secret.to_string()))
+}
+
 /// Macro to attempt reconnection and restart stream
 macro_rules! attempt_reconnect {
-    ($server_url:expr, $api_key:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
+    ($server_url:expr, $api_key:expr, $oauth_token:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
         // Attempt to reconnect and restart stream with pagination token
-        match YouTubeClient::connect($server_url.clone(), $api_key.clone()).await {
+        match YouTubeClient::connect($server_url.clone(), $api_key.clone(), $oauth_token.clone())
+            .await
+        {
             Ok(mut new_client) => {
                 match new_client
                     .stream_comments(Some($chat_id.clone()), $page_token.clone())
@@ -185,6 +273,35 @@ fn parse_resume_info(
     Ok((chat_id, next_page_token))
 }
 
+/// Get a valid OAuth access token from the manager.
+///
+/// This should be called before each API request to ensure the token hasn't expired.
+/// The manager automatically refreshes the token if needed.
+async fn get_valid_oauth_token(oauth_manager: &mut Option<OAuthManager>) -> Option<String> {
+    if let Some(manager) = oauth_manager {
+        match manager.get_access_token().await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                eprintln!("Failed to get valid OAuth token: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+/// Helper function to save OAuth token to file
+fn save_oauth_token(oauth_manager: &Option<OAuthManager>, token_path: &Option<String>) {
+    if let Some(manager) = oauth_manager {
+        if let Some(path) = token_path {
+            if let Err(e) = manager.save_token(path) {
+                eprintln!("Warning: Failed to save refreshed OAuth token: {}", e);
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -198,14 +315,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("--output-file must be specified when using --resume".into());
     }
 
-    // Read API key from file if provided (needed for both REST and gRPC)
+    // Validate that API key and OAuth are mutually exclusive
+    if args.api_key_path.is_some() && args.oauth_token_path.is_some() {
+        return Err("--api-key-path and --oauth-token-path are mutually exclusive".into());
+    }
+
+    // Authentication: either API key or OAuth
+    let mut oauth_manager: Option<OAuthManager> = None;
+    let mut oauth_token_path_str: Option<String> = None;
+
     let api_key = if let Some(api_key_path) = &args.api_key_path {
+        // Use API key authentication
         eprintln!("Reading API key from: {}", api_key_path);
         let key = std::fs::read_to_string(api_key_path)
             .map_err(|e| format!("Failed to read API key file '{}': {}", api_key_path, e))?
             .trim()
             .to_string();
         Some(key)
+    } else if let Some(oauth_token_path) = &args.oauth_token_path {
+        // Use OAuth authentication
+        eprintln!("Using OAuth authentication");
+        oauth_token_path_str = Some(oauth_token_path.clone());
+
+        // Check if token file exists
+        let token_file_exists = std::path::Path::new(oauth_token_path).exists();
+
+        if !token_file_exists {
+            // Token file doesn't exist - guide user to use helper binary
+            eprintln!("\n=================================================");
+            eprintln!("OAuth token file not found: {}", oauth_token_path);
+            eprintln!("=================================================");
+            eprintln!("\nTo obtain an OAuth token, please run the helper tool:\n");
+            eprintln!("  yt-oauth-helper \\");
+            eprintln!("    --client-id YOUR_CLIENT_ID \\");
+            eprintln!("    --client-secret YOUR_CLIENT_SECRET \\");
+            eprintln!("    --token-path {}\n", oauth_token_path);
+            eprintln!("After obtaining the token, run this command again.");
+            eprintln!("=================================================\n");
+            return Err(
+                "OAuth token file not found. Use yt-oauth-helper to obtain a token.".into(),
+            );
+        }
+
+        // Load existing token
+        // Client credentials are required for token refresh
+        let (client_id, client_secret) = load_oauth_credentials(
+            args.oauth_client_id.as_deref(),
+            args.oauth_client_secret.as_deref(),
+        )?;
+
+        eprintln!("Loading OAuth token from: {}", oauth_token_path);
+        eprintln!("Client ID: {}", client_id);
+        let config = OAuthConfig::new(client_id, client_secret);
+        let mut manager = OAuthManager::new(config);
+        manager.load_token(oauth_token_path)?;
+        oauth_manager = Some(manager);
+
+        None // No API key when using OAuth
     } else {
         None
     };
@@ -276,8 +442,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         eprintln!("Fetching chat ID from REST API at: {}", rest_api_address);
 
+        // Get OAuth token if using OAuth
+        let oauth_token = if let Some(ref mut manager) = oauth_manager {
+            Some(manager.get_access_token().await?)
+        } else {
+            None
+        };
+
         // Fetch the chat ID from the videos.list endpoint
-        chat_id = Some(fetch_chat_id(&rest_api_address, video_id, api_key.as_deref()).await?);
+        chat_id = Some(
+            fetch_chat_id(
+                &rest_api_address,
+                video_id,
+                api_key.as_deref(),
+                oauth_token.as_deref(),
+            )
+            .await?,
+        );
 
         eprintln!("Got chat ID: {}", chat_id.as_ref().unwrap());
     }
@@ -298,8 +479,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Connecting to gRPC server at: {}", server_url);
 
+    // Get OAuth token if using OAuth
+    let oauth_token = if let Some(ref mut manager) = oauth_manager {
+        Some(manager.get_access_token().await?)
+    } else {
+        None
+    };
+
     // Connect to the gRPC server (fail fast if initial connection fails)
-    let mut client = YouTubeClient::connect(server_url.clone(), api_key.clone()).await?;
+    let mut client =
+        YouTubeClient::connect(server_url.clone(), api_key.clone(), oauth_token.clone()).await?;
 
     // Stream comments using the retrieved chat ID and page token (if resuming)
     let mut stream = client
@@ -331,15 +520,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
+                        // Get valid OAuth token before reconnecting
+                        let oauth_token = get_valid_oauth_token(&mut oauth_manager).await;
+
                         attempt_reconnect!(
                             server_url,
                             api_key,
+                            oauth_token,
                             chat_id,
                             next_page_token,
                             stream,
                             reconnect_until,
                             args.reconnect_wait_secs
                         );
+
+                        // Save refreshed token if using OAuth
+                        save_oauth_token(&oauth_manager, &oauth_token_path_str);
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
@@ -392,15 +588,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Time to reconnect
                         reconnect_until = None;
 
+                        // Get valid OAuth token before reconnecting
+                        let oauth_token = get_valid_oauth_token(&mut oauth_manager).await;
+
                         attempt_reconnect!(
                             server_url,
                             api_key,
+                            oauth_token,
                             chat_id,
                             next_page_token,
                             stream,
                             reconnect_until,
                             args.reconnect_wait_secs
                         );
+
+                        // Save refreshed token if using OAuth
+                        save_oauth_token(&oauth_manager, &oauth_token_path_str);
                     }
                     // Handle SIGINT (Ctrl+C) - immediate exit even during reconnect wait
                     _ = tokio::signal::ctrl_c() => {
@@ -439,19 +642,26 @@ async fn fetch_chat_id(
     rest_api_address: &str,
     video_id: &str,
     api_key: Option<&str>,
+    oauth_token: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mut url = format!(
+    let url = format!(
         "{}/youtube/v3/videos?part=liveStreamingDetails&id={}",
         rest_api_address, video_id
     );
 
-    // Add API key as query parameter if provided
+    let client = reqwest::Client::new();
+    let mut request = client.get(&url);
+
+    // Add authentication: either API key or OAuth token
     if let Some(key) = api_key {
-        url.push_str(&format!("&key={}", key));
+        // Use API key as query parameter
+        request = request.query(&[("key", key)]);
+    } else if let Some(token) = oauth_token {
+        // Use OAuth token in Authorization header
+        request = request.header("Authorization", format!("Bearer {}", token));
     }
 
-    let client = reqwest::Client::new();
-    let response = client.get(&url).send().await?;
+    let response = request.send().await?;
 
     if !response.status().is_success() {
         let status = response.status();
