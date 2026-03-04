@@ -76,10 +76,29 @@ function getApiKeyPath() {
   return getStore().get('apiKeyPath');
 }
 
+// Process state tracking
+// States: 'not_started' | 'running' | 'exited'
+function setProcessState(state) {
+  getStore().put('processState', state);
+}
+
+function getProcessState() {
+  return getStore().get('processState') || 'not_started';
+}
+
+function hasProcessExited() {
+  return getProcessState() === 'exited';
+}
+
+function isProcessRunning() {
+  return getProcessState() === 'running';
+}
+
 // Initialize scenario store before each scenario
 beforeScenario(async function() {
   setReceivedLines([]);
   setFetcherProcess(null);
+  setProcessState('not_started');
   setServerAddress(null);
   setApiKeyPath(null);
 });
@@ -191,6 +210,7 @@ async function startFetcherWithOptions(options = {}) {
     
     const fetcherProcess = spawn(binaryPath, args, { env: env });
     setFetcherProcess(fetcherProcess);
+    setProcessState('running');
 
     let stderrOutput = '';
     let errorOutput = '';
@@ -267,6 +287,7 @@ async function startFetcherWithOptions(options = {}) {
       getStore().put('exitCode', exitCode);
       getStore().put('errorOutput', errorOutput);
       getStore().put('stderrOutput', stderrOutput);
+      setProcessState('exited');
       
       // Always resolve on process close - caller can check exit code
       if (startupTimeout) {
@@ -375,6 +396,7 @@ step('Stop the fetcher application', async function () {
     }
     
     setFetcherProcess(null);
+    setProcessState('exited');
     console.log('Fetcher process stopped');
   }
 });
@@ -791,6 +813,7 @@ step('Wait for fetcher to exit gracefully', async function () {
     console.log(`Fetcher process already exited with code ${fetcherProcess.exitCode}`);
     getStore().put('exitCode', fetcherProcess.exitCode);
     setFetcherProcess(null);
+    setProcessState('exited');
     return;
   }
 
@@ -804,6 +827,7 @@ step('Wait for fetcher to exit gracefully', async function () {
       console.log(`Fetcher process exited with code ${code}`);
       getStore().put('exitCode', code);
       setFetcherProcess(null);
+      setProcessState('exited');
       resolve();
     });
   });
@@ -1045,6 +1069,7 @@ step('Start the fetcher application with both API key and OAuth token', async fu
   
   const fetcherProcess = spawn(binaryPath, args, { env });
   setFetcherProcess(fetcherProcess);
+  setProcessState('running');
   
   let stderrOutput = '';
   
@@ -1056,6 +1081,7 @@ step('Start the fetcher application with both API key and OAuth token', async fu
     getStore().put('exitCode', code);
     getStore().put('stderrOutput', stderrOutput);
     setFetcherProcess(null);
+    setProcessState('exited');
   });
   
   // Store paths for cleanup
@@ -1068,7 +1094,7 @@ step('Start the fetcher application with both API key and OAuth token', async fu
 
 step('Verify fetcher exits with mutual exclusivity error', async function () {
   const fetcherExited = await waitFor({
-    condition: () => getFetcherProcess() === null,
+    condition: () => hasProcessExited(),
     maxWaitTimeMs: 5000,
     description: 'fetcher to exit with error'
   });
@@ -1125,6 +1151,7 @@ step('Start the fetcher application with OAuth token path but no client credenti
   
   const fetcherProcess = spawn(binaryPath, args, { env });
   setFetcherProcess(fetcherProcess);
+  setProcessState('running');
   
   let stderrOutput = '';
   
@@ -1136,6 +1163,7 @@ step('Start the fetcher application with OAuth token path but no client credenti
     getStore().put('exitCode', code);
     getStore().put('stderrOutput', stderrOutput);
     setFetcherProcess(null);
+    setProcessState('exited');
   });
   
   getStore().put('oauthTokenPath', oauthTokenPath);
@@ -1146,7 +1174,7 @@ step('Start the fetcher application with OAuth token path but no client credenti
 
 step('Verify fetcher exits with missing client ID error', async function () {
   const fetcherExited = await waitFor({
-    condition: () => getFetcherProcess() === null,
+    condition: () => hasProcessExited(),
     maxWaitTimeMs: 5000,
     description: 'fetcher to exit with error'
   });
@@ -1341,7 +1369,7 @@ step('Start the fetcher with OAuth token but without client credentials', async 
 
 step('Verify fetcher fails with token refresh error', async function() {
   const fetcherExited = await waitFor({
-    condition: () => getFetcherProcess() === null,
+    condition: () => hasProcessExited(),
     maxWaitTimeMs: 8000,
     description: 'fetcher to exit with token refresh error'
   });
@@ -1397,7 +1425,7 @@ step('Start the fetcher with the invalid OAuth token', async function() {
 
 step('Verify fetcher fails with authentication error', async function() {
   const fetcherExited = await waitFor({
-    condition: () => getFetcherProcess() === null,
+    condition: () => hasProcessExited(),
     maxWaitTimeMs: 8000,
     description: 'fetcher to exit with authentication error'
   });
