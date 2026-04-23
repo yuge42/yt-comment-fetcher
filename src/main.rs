@@ -36,6 +36,12 @@ struct Args {
     #[arg(long, default_value = "5")]
     reconnect_wait_secs: u64,
 
+    /// Maximum session duration in seconds. The fetcher will stop after this many seconds
+    /// have elapsed since the session started, regardless of stream state.
+    /// If not specified, the fetcher runs until manually stopped.
+    #[arg(long)]
+    max_session_secs: Option<u64>,
+
     /// Path to output file where JSON messages will be written (one per line)
     #[arg(long)]
     output_file: Option<String>,
@@ -302,6 +308,15 @@ fn save_oauth_token(oauth_manager: &Option<OAuthManager>, token_path: &Option<St
     }
 }
 
+/// Wait until an optional session deadline, or wait forever if no deadline is set.
+async fn wait_for_session_deadline(deadline: Option<tokio::time::Instant>) {
+    if let Some(dl) = deadline {
+        tokio::time::sleep_until(dl).await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -497,6 +512,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!("Reconnect wait time: {} seconds", args.reconnect_wait_secs);
 
+    // Set up optional session deadline
+    let session_deadline: Option<tokio::time::Instant> = args.max_session_secs.map(|secs| {
+        eprintln!("Maximum session duration: {} seconds", secs);
+        tokio::time::Instant::now() + tokio::time::Duration::from_secs(secs)
+    });
+
     // Track the next page token for pagination on reconnection
     // Initialize with the resume token if we have one
     let mut next_page_token: Option<String> = initial_page_token;
@@ -547,6 +568,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Received SIGTERM, shutting down...");
                         break;
                     }
+                    // Handle session deadline - stop when max duration is reached
+                    _ = wait_for_session_deadline(session_deadline) => {
+                        eprintln!("Maximum session duration reached, shutting down...");
+                        break;
+                    }
                 }
             } else {
                 // Normal operation - process stream messages
@@ -569,6 +595,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Handle SIGTERM
                     _ = sigterm.recv() => {
                         eprintln!("Received SIGTERM, shutting down...");
+                        break;
+                    }
+                    // Handle session deadline - stop when max duration is reached
+                    _ = wait_for_session_deadline(session_deadline) => {
+                        eprintln!("Maximum session duration reached, shutting down...");
                         break;
                     }
                 }
@@ -610,6 +641,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Received SIGINT, shutting down...");
                         break;
                     }
+                    // Handle session deadline - stop when max duration is reached
+                    _ = wait_for_session_deadline(session_deadline) => {
+                        eprintln!("Maximum session duration reached, shutting down...");
+                        break;
+                    }
                 }
             } else {
                 // Normal operation - process stream messages
@@ -627,6 +663,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Handle SIGINT (Ctrl+C)
                     _ = tokio::signal::ctrl_c() => {
                         eprintln!("Received SIGINT, shutting down...");
+                        break;
+                    }
+                    // Handle session deadline - stop when max duration is reached
+                    _ = wait_for_session_deadline(session_deadline) => {
+                        eprintln!("Maximum session duration reached, shutting down...");
                         break;
                     }
                 }

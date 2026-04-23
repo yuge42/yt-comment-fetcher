@@ -35,3 +35,4 @@ oauth-token*.json
 
 # Google Cloud OAuth client secret files
 client_secret_*.json
+*.zip

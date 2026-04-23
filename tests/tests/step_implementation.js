@@ -860,6 +860,51 @@ step('Verify fetcher exited with code <expectedCode>', async function (expectedC
   console.log(`Verified fetcher exited with code ${expected}`);
 });
 
+// === Session Duration Test Steps ===
+
+// Start the fetcher with a max session duration
+step('Start the fetcher with max session duration of <secs> seconds', async function (secs) {
+  const apiKeyPath = getApiKeyPath();
+  const args = ['--video-id', 'test-video-1', '--max-session-secs', secs];
+  if (apiKeyPath) {
+    args.push('--api-key-path', apiKeyPath);
+  }
+  return startFetcherWithOptions({ customArgs: args });
+});
+
+// Wait for the fetcher to exit because the session duration limit was reached
+step('Wait for fetcher to exit due to session duration limit', async function () {
+  const fetcherExited = await waitFor({
+    condition: () => hasProcessExited(),
+    maxWaitTimeMs: 15000,
+    description: 'fetcher to exit after session duration'
+  });
+
+  assert.strictEqual(
+    fetcherExited.conditionMet,
+    true,
+    'Fetcher should have exited after session duration expired'
+  );
+
+  const fetcherProcess = getFetcherProcess();
+  if (fetcherProcess) {
+    getStore().put('exitCode', fetcherProcess.exitCode);
+    setProcessState('exited');
+  }
+});
+
+// Verify that the fetcher logged a session duration expiry message
+step('Verify fetcher logged session duration expiry message', async function () {
+  const stderrOutput = getStore().get('stderrOutput') || '';
+
+  assert.ok(
+    stderrOutput.includes('Maximum session duration reached'),
+    `Expected session duration expiry message in logs but got: ${stderrOutput}`
+  );
+
+  console.log('Verified fetcher logged session duration expiry message');
+});
+
 // === File Output Test Steps ===
 
 const fs = require('fs');

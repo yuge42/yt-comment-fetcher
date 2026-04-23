@@ -198,6 +198,15 @@ The `--resume` flag:
 ./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt --reconnect-wait-secs 10
 ```
 
+**Maximum Session Duration:** To limit how long the fetcher runs (and therefore limit API quota consumption), use the `--max-session-secs` flag. The fetcher will automatically stop after the specified number of seconds, regardless of stream state:
+
+```bash
+# Stop automatically after 1 hour (3600 seconds)
+./target/release/yt-comment-fetcher --video-id YOUR_VIDEO_ID --api-key-path api-key.txt --max-session-secs 3600
+```
+
+If `--max-session-secs` is not specified, the fetcher runs indefinitely until manually stopped.
+
 Press Ctrl+C to stop.
 
 ### Viewing Comments with the Viewer Script
