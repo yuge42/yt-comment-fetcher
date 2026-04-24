@@ -48,10 +48,6 @@ OAuth 2.0 is required for accessing private live chats or when API quotas are a 
 
 Use the helper tool to complete the initial authorization:
 
-**Step 2: Obtain OAuth token (first time only)**
-
-Use the helper tool to complete the initial authorization:
-
 ```bash
 # Build the project first
 cargo build --release
@@ -141,42 +137,118 @@ The token file is stored as JSON with secure permissions (owner read/write only)
 
 The application will:
 1. Fetch the live chat ID from the videos.list endpoint using the provided video ID
-2. Connect to the gRPC server and stream comments to stdout as JSON
+2. Connect to the gRPC server and stream comments
 3. Automatically reconnect if the stream times out during message reception (default: wait 5 seconds between attempts)
 
-### Saving Comments to a File
+### Output Options
 
-You can save comments directly to a file using the `--output-file` option:
+By default, fetched comments are written as JSON to **stdout** (one response per line). Two optional flags let you persist them instead:
+
+| Flag | Description |
+|------|-------------|
+| `--output-file <PATH>` | Write NDJSON (newline-delimited JSON) to a file |
+| `--sqlite-path <PATH>` | Store messages and author details in a SQLite database |
+
+Both flags can be used together; the SQLite and file outputs will both receive every message.
+
+#### Saving Comments to a File (NDJSON)
 
 ```bash
 # With API key
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --api-key-path api-key.txt \
-  --output-file comments.json
+  --output-file comments.ndjson
 
 # With OAuth
 ./target/release/yt-comment-fetcher \
   --video-id YOUR_VIDEO_ID \
   --oauth-token-path oauth-token.json \
   --oauth-client-id path/to/client_secret_xxx.json \
-  --output-file comments.json
+  --output-file comments.ndjson
+```
+
+#### Saving Comments to SQLite
+
+The `--sqlite-path` flag opens (or creates) a SQLite database and stores data in two tables:
+
+- **`authors`** – one row per YouTube channel; upserted on every message so display names and avatar URLs stay current
+- **`messages`** – one row per chat message; structured columns plus the full `raw_json` of the item
+
+```bash
+# With API key
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --sqlite-path comments.db
+
+# With OAuth
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id path/to/client_secret_xxx.json \
+  --sqlite-path comments.db
+```
+
+Schema:
+
+```sql
+CREATE TABLE authors (
+    channel_id        TEXT PRIMARY KEY,
+    channel_url       TEXT,
+    display_name      TEXT,
+    profile_image_url TEXT,
+    is_verified       INTEGER,
+    is_chat_owner     INTEGER,
+    is_chat_sponsor   INTEGER,
+    is_chat_moderator INTEGER
+);
+
+CREATE TABLE messages (
+    id                TEXT PRIMARY KEY,
+    live_chat_id      TEXT,
+    author_channel_id TEXT REFERENCES authors(channel_id),
+    published_at      TEXT,
+    type              INTEGER,
+    display_message   TEXT,
+    raw_json          TEXT NOT NULL
+);
+```
+
+You can query the database with any SQLite client, for example:
+
+```bash
+# Show the 10 most recent messages with author names
+sqlite3 comments.db \
+  "SELECT a.display_name, m.display_message, m.published_at
+   FROM messages m JOIN authors a ON m.author_channel_id = a.channel_id
+   ORDER BY m.published_at DESC LIMIT 10;"
+```
+
+#### Using Both Outputs at Once
+
+```bash
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --output-file comments.ndjson \
+  --sqlite-path comments.db
 ```
 
 ### Resuming from a Saved File
 
-If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag:
+If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag (requires `--output-file`):
 
 ```bash
 # Resume with API key
 ./target/release/yt-comment-fetcher \
-  --output-file comments.json \
+  --output-file comments.ndjson \
   --resume \
   --api-key-path api-key.txt
 
 # Resume with OAuth
 ./target/release/yt-comment-fetcher \
-  --output-file comments.json \
+  --output-file comments.ndjson \
   --resume \
   --oauth-token-path oauth-token.json \
   --oauth-client-id YOUR_CLIENT_ID \
@@ -188,8 +260,6 @@ The `--resume` flag:
 - Extracts the chat ID and pagination token
 - Continues streaming from where it left off
 - `--video-id` becomes optional when using `--resume`, but can be provided as a fallback if the chat ID cannot be extracted from the file
-
-**Note:** When using `--resume`, the `--output-file` must be specified, but `--video-id` is optional.
 
 **Reconnection:** If the gRPC stream times out or is lost during message reception, the fetcher will automatically attempt to reconnect. Initial connection failures will cause the application to exit immediately (fail-fast behavior appropriate for CLI tools). You can configure the wait time between reconnection attempts:
 
