@@ -54,6 +54,17 @@ struct Args {
     /// Resume streaming from the last message in the output file
     #[arg(long)]
     resume: bool,
+
+    /// Print comments in a human-readable colored format to stderr
+    /// (in addition to the regular JSON output on stdout)
+    #[arg(long)]
+    pretty_print: bool,
+
+    /// Suppress frequent informational stderr messages such as
+    /// "Received empty response", reconnection waits, and page-token notices.
+    /// Error messages are never suppressed.
+    #[arg(long)]
+    quiet: bool,
 }
 
 /// Structure for parsing Google Cloud OAuth client secret JSON file
@@ -128,7 +139,7 @@ fn load_oauth_credentials(
 
 /// Macro to attempt reconnection and restart stream
 macro_rules! attempt_reconnect {
-    ($server_url:expr, $api_key:expr, $oauth_token:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr) => {{
+    ($server_url:expr, $api_key:expr, $oauth_token:expr, $chat_id:expr, $page_token:expr, $stream:expr, $reconnect_until:expr, $reconnect_secs:expr, $quiet:expr) => {{
         // Attempt to reconnect and restart stream with pagination token
         match YouTubeClient::connect($server_url.clone(), $api_key.clone(), $oauth_token.clone())
             .await
@@ -140,7 +151,9 @@ macro_rules! attempt_reconnect {
                 {
                     Ok(new_stream) => {
                         $stream = new_stream;
-                        eprintln!("Reconnected successfully");
+                        if !$quiet {
+                            eprintln!("Reconnected successfully");
+                        }
                     }
                     Err(e) => {
                         eprintln!("Failed to restart stream after reconnection: {}", e);
@@ -165,7 +178,7 @@ macro_rules! attempt_reconnect {
 
 /// Macro to handle stream messages (avoids code duplication)
 macro_rules! handle_stream_message {
-    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr, $consumers:expr) => {
+    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr, $consumers:expr, $quiet:expr) => {
         match $stream_result {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
@@ -174,7 +187,9 @@ macro_rules! handle_stream_message {
                 // Check if the response contains any items
                 if message.items.is_empty() {
                     // Log empty response to stderr instead of stdout
-                    eprintln!("Received empty response (no items)");
+                    if !$quiet {
+                        eprintln!("Received empty response (no items)");
+                    }
                 } else {
                     // Dispatch to all registered consumers
                     for consumer in $consumers.iter_mut() {
@@ -192,8 +207,10 @@ macro_rules! handle_stream_message {
                 );
 
                 // Log pagination status
-                if let Some(ref token) = $next_page_token {
-                    eprintln!("Will resume from page token: {}", token);
+                if !$quiet {
+                    if let Some(ref token) = $next_page_token {
+                        eprintln!("Will resume from page token: {}", token);
+                    }
                 }
 
                 // Schedule reconnection
@@ -204,14 +221,16 @@ macro_rules! handle_stream_message {
             }
             None => {
                 // Stream ended (timeout or connection closed)
-                eprintln!(
-                    "Stream ended. Waiting {} seconds before reconnecting...",
-                    $reconnect_wait_secs
-                );
+                if !$quiet {
+                    eprintln!(
+                        "Stream ended. Waiting {} seconds before reconnecting...",
+                        $reconnect_wait_secs
+                    );
 
-                // Log pagination status
-                if let Some(ref token) = $next_page_token {
-                    eprintln!("Will resume from page token: {}", token);
+                    // Log pagination status
+                    if let Some(ref token) = $next_page_token {
+                        eprintln!("Will resume from page token: {}", token);
+                    }
                 }
 
                 // Schedule reconnection
@@ -415,6 +434,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         consumers.push(Box::new(consumers::stdout_consumer::StdoutConsumer));
     }
 
+    // Add pretty-print consumer when requested (writes to stderr alongside other output).
+    if args.pretty_print {
+        consumers.push(Box::new(consumers::pretty_consumer::PrettyConsumer));
+    }
+
     // Try to resume from file if requested
     let (mut chat_id, initial_page_token) = if args.resume {
         let output_path = args
@@ -562,7 +586,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             stream,
                             reconnect_until,
-                            args.reconnect_wait_secs
+                            args.reconnect_wait_secs,
+                            args.quiet
                         );
 
                         // Save refreshed token if using OAuth
@@ -594,7 +619,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             reconnect_until,
                             args.reconnect_wait_secs,
-                            consumers
+                            consumers,
+                            args.quiet
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
@@ -640,7 +666,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             stream,
                             reconnect_until,
-                            args.reconnect_wait_secs
+                            args.reconnect_wait_secs,
+                            args.quiet
                         );
 
                         // Save refreshed token if using OAuth
@@ -667,7 +694,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             reconnect_until,
                             args.reconnect_wait_secs,
-                            consumers
+                            consumers,
+                            args.quiet
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
