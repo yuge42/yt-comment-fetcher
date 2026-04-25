@@ -51,7 +51,8 @@ struct Args {
     #[arg(long)]
     sqlite_path: Option<String>,
 
-    /// Resume streaming from the last message in the output file
+    /// Resume streaming from the last message in the output file or SQLite database.
+    /// Requires --output-file or --sqlite-path (or both).
     #[arg(long)]
     resume: bool,
 
@@ -346,8 +347,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Either --video-id or --resume must be specified".into());
     }
 
-    if args.resume && args.output_file.is_none() {
-        return Err("--output-file must be specified when using --resume".into());
+    if args.resume && args.output_file.is_none() && args.sqlite_path.is_none() {
+        return Err("--output-file or --sqlite-path must be specified when using --resume".into());
     }
 
     // Validate that API key and OAuth are mutually exclusive
@@ -439,39 +440,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         consumers.push(Box::new(consumers::pretty_consumer::PrettyConsumer));
     }
 
-    // Try to resume from file if requested
+    // Try to resume from file or database if requested
     let (mut chat_id, initial_page_token) = if args.resume {
-        let output_path = args
-            .output_file
-            .as_ref()
-            .expect("output_file is guaranteed to be Some when resume is true");
-        eprintln!("Attempting to resume from: {}", output_path);
+        if let Some(ref output_path) = args.output_file {
+            eprintln!("Attempting to resume from: {}", output_path);
 
-        match read_last_line(output_path)? {
-            Some(last_line) => {
-                eprintln!("Found last line, parsing resume info...");
-                match parse_resume_info(&last_line) {
-                    Ok((Some(cid), token)) => {
-                        eprintln!("Resuming with chat ID: {}", cid);
-                        if let Some(ref t) = token {
-                            eprintln!("Resuming from page token: {}", t);
+            match read_last_line(output_path)? {
+                Some(last_line) => {
+                    eprintln!("Found last line, parsing resume info...");
+                    match parse_resume_info(&last_line) {
+                        Ok((Some(cid), token)) => {
+                            eprintln!("Resuming with chat ID: {}", cid);
+                            if let Some(ref t) = token {
+                                eprintln!("Resuming from page token: {}", t);
+                            }
+                            (Some(cid), token)
                         }
-                        (Some(cid), token)
-                    }
-                    Ok((None, _)) => {
-                        eprintln!("Could not extract chat ID from last line");
-                        (None, None)
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to parse last line: {}", e);
-                        (None, None)
+                        Ok((None, _)) => {
+                            eprintln!("Could not extract chat ID from last line");
+                            (None, None)
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse last line: {}", e);
+                            (None, None)
+                        }
                     }
                 }
+                None => {
+                    eprintln!("Output file is empty or does not exist yet");
+                    (None, None)
+                }
             }
-            None => {
-                eprintln!("Output file is empty or does not exist yet");
-                (None, None)
+        } else if let Some(ref sqlite_path) = args.sqlite_path {
+            eprintln!("Attempting to resume from SQLite database: {}", sqlite_path);
+
+            match consumers::sqlite_consumer::SqliteConsumer::read_resume_info(sqlite_path)? {
+                (Some(cid), token) => {
+                    eprintln!("Resuming with chat ID: {}", cid);
+                    if let Some(ref t) = token {
+                        eprintln!("Resuming from page token: {}", t);
+                    }
+                    (Some(cid), token)
+                }
+                (None, _) => {
+                    eprintln!("Could not extract chat ID from SQLite database");
+                    (None, None)
+                }
             }
+        } else {
+            unreachable!("validation ensures --output-file or --sqlite-path when --resume is set");
         }
     } else {
         (None, None)

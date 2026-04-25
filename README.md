@@ -237,7 +237,9 @@ sqlite3 comments.db \
 
 ### Resuming from a Saved File
 
-If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag (requires `--output-file`):
+If the fetcher is interrupted, you can resume from where it left off using the `--resume` flag.  It requires either `--output-file` **or** `--sqlite-path` (or both) to determine where to read resume state from.
+
+#### Resuming from an NDJSON file
 
 ```bash
 # Resume with API key
@@ -255,11 +257,32 @@ If the fetcher is interrupted, you can resume from where it left off using the `
   --oauth-client-secret YOUR_CLIENT_SECRET
 ```
 
+When `--output-file` is given, the fetcher reads the last JSON line to extract the chat ID and pagination token.
+
+#### Resuming from a SQLite database
+
+```bash
+# Resume with API key
+./target/release/yt-comment-fetcher \
+  --sqlite-path comments.db \
+  --resume \
+  --api-key-path api-key.txt
+
+# Resume with OAuth
+./target/release/yt-comment-fetcher \
+  --sqlite-path comments.db \
+  --resume \
+  --oauth-token-path oauth-token.json \
+  --oauth-client-id YOUR_CLIENT_ID \
+  --oauth-client-secret YOUR_CLIENT_SECRET
+```
+
+When `--sqlite-path` is given (without `--output-file`), the fetcher reads the `metadata` table that is automatically maintained in the database to find the last known chat ID and pagination token.
+
 The `--resume` flag:
-- Reads the last line from the output file
-- Extracts the chat ID and pagination token
+- Extracts the chat ID and pagination token from the selected output backend
 - Continues streaming from where it left off
-- `--video-id` becomes optional when using `--resume`, but can be provided as a fallback if the chat ID cannot be extracted from the file
+- `--video-id` becomes optional when using `--resume`, but can be provided as a fallback if the chat ID cannot be extracted from the output backend
 
 **Reconnection:** If the gRPC stream times out or is lost during message reception, the fetcher will automatically attempt to reconnect. Initial connection failures will cause the application to exit immediately (fail-fast behavior appropriate for CLI tools). You can configure the wait time between reconnection attempts:
 

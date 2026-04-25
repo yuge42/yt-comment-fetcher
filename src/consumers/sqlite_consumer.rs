@@ -42,11 +42,59 @@ impl SqliteConsumer {
                 type              INTEGER,
                 display_message   TEXT,
                 raw_json          TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS metadata (
+                key   TEXT PRIMARY KEY,
+                value TEXT
             );",
         )
         .map_err(|e| format!("Failed to initialise SQLite schema: {}", e))?;
 
         Ok(Self { conn })
+    }
+
+    /// Read the last known `live_chat_id` and `next_page_token` stored in the database.
+    ///
+    /// Returns `(chat_id, page_token)` – either or both may be `None` if the database is
+    /// empty or was created with an older schema that lacks the `metadata` table.
+    pub fn read_resume_info(
+        path: &str,
+    ) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+        let conn = Connection::open(path)
+            .map_err(|e| format!("Failed to open SQLite database '{}': {}", path, e))?;
+
+        // The metadata table may not exist (older databases without the schema).
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='metadata'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if !table_exists {
+            return Ok((None, None));
+        }
+
+        let chat_id: Option<String> = conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'live_chat_id'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let next_page_token: Option<String> = conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'next_page_token'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok((chat_id, next_page_token))
     }
 }
 
@@ -55,11 +103,24 @@ impl MessageConsumer for SqliteConsumer {
         &mut self,
         response: &LiveChatMessageListResponse,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if response.items.is_empty() {
-            return Ok(());
+        // Open a transaction that covers both message/author inserts and metadata updates
+        // so resume state is always consistent with the persisted messages.
+        let tx = self.conn.transaction()?;
+
+        // Always persist next_page_token for resume support, even when the response
+        // contains no items (e.g. end of a page with an empty last batch).
+        if let Some(page_token) = response.next_page_token.as_deref() {
+            tx.execute(
+                "INSERT INTO metadata (key, value) VALUES ('next_page_token', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![page_token],
+            )?;
         }
 
-        let tx = self.conn.transaction()?;
+        if response.items.is_empty() {
+            tx.commit()?;
+            return Ok(());
+        }
 
         for item in &response.items {
             // --- author details ---
@@ -133,6 +194,22 @@ impl MessageConsumer for SqliteConsumer {
             )?;
         }
 
+        // Persist live_chat_id for resume support.
+        // All items in a batch share the same chat, so the first item's snippet is sufficient.
+        let live_chat_id = response
+            .items
+            .first()
+            .and_then(|item| item.snippet.as_ref())
+            .and_then(|s| s.live_chat_id.as_deref());
+
+        if let Some(chat_id) = live_chat_id {
+            tx.execute(
+                "INSERT INTO metadata (key, value) VALUES ('live_chat_id', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![chat_id],
+            )?;
+        }
+
         tx.commit()?;
         Ok(())
     }
@@ -182,16 +259,16 @@ mod tests {
     #[test]
     fn test_open_in_memory_creates_schema() {
         let consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
-        // Verify tables exist by querying sqlite_master
+        // Verify all three tables exist
         let count: i64 = consumer
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('authors','messages')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('authors','messages','metadata')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 2, "both tables should be created");
+        assert_eq!(count, 3, "all three tables should be created");
     }
 
     #[test]
@@ -294,5 +371,123 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).expect("raw_json should be valid JSON");
         assert_eq!(parsed["id"], "msg-json");
+    }
+
+    #[test]
+    fn test_consume_persists_metadata() {
+        let mut consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+
+        let msg = make_message("msg-meta", "chan-meta", "Meta", "metadata test");
+        let mut response = make_response(vec![msg]);
+        response.next_page_token = Some("token-abc".to_string());
+
+        consumer.consume(&response).expect("consume");
+
+        let chat_id: String = consumer
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'live_chat_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(chat_id, "chat-123");
+
+        let page_token: String = consumer
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'next_page_token'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(page_token, "token-abc");
+    }
+
+    #[test]
+    fn test_consume_updates_metadata_on_subsequent_responses() {
+        let mut consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+
+        let msg1 = make_message("msg-a", "chan-a", "Alice", "first");
+        let mut resp1 = make_response(vec![msg1]);
+        resp1.next_page_token = Some("token-1".to_string());
+        consumer.consume(&resp1).expect("first consume");
+
+        let msg2 = make_message("msg-b", "chan-b", "Bob", "second");
+        let mut resp2 = make_response(vec![msg2]);
+        resp2.next_page_token = Some("token-2".to_string());
+        consumer.consume(&resp2).expect("second consume");
+
+        let page_token: String = consumer
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'next_page_token'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            page_token, "token-2",
+            "metadata should reflect the latest token"
+        );
+    }
+
+    #[test]
+    fn test_consume_persists_page_token_for_empty_response() {
+        // next_page_token should be stored even when items is empty.
+        let mut consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+
+        let mut response = make_response(vec![]);
+        response.next_page_token = Some("token-empty".to_string());
+        consumer.consume(&response).expect("consume empty response");
+
+        let page_token: String = consumer
+            .conn
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'next_page_token'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(page_token, "token-empty");
+    }
+
+    #[test]
+    fn test_read_resume_info_from_file() {
+        // Write to a real temp file so read_resume_info (which opens its own connection) can read it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("resume_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        let mut consumer = SqliteConsumer::open(db_path_str).expect("open");
+
+        let msg = make_message("msg-r", "chan-r", "Resume", "hi");
+        let mut response = make_response(vec![msg]);
+        response.next_page_token = Some("token-resume".to_string());
+        consumer.consume(&response).expect("consume");
+
+        // Drop the consumer to close its connection before read_resume_info opens another.
+        drop(consumer);
+
+        let (chat_id, page_token) =
+            SqliteConsumer::read_resume_info(db_path_str).expect("read_resume_info");
+        assert_eq!(chat_id.as_deref(), Some("chat-123"));
+        assert_eq!(page_token.as_deref(), Some("token-resume"));
+    }
+
+    #[test]
+    fn test_read_resume_info_empty_db() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("empty.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Create schema but write nothing
+        let _consumer = SqliteConsumer::open(db_path_str).expect("open");
+        drop(_consumer);
+
+        let (chat_id, page_token) =
+            SqliteConsumer::read_resume_info(db_path_str).expect("read_resume_info");
+        assert!(chat_id.is_none());
+        assert!(page_token.is_none());
     }
 }
