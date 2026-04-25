@@ -277,6 +277,42 @@ The `--resume` flag:
 
 If `--max-session-secs` is not specified, the fetcher runs indefinitely until manually stopped.
 
+**Human-Readable Output (`--pretty-print`):** To display comments in a colored, human-readable format (similar to `viewer.sh`) without any external tools, use the `--pretty-print` flag. Comments are printed to **stderr** so that the JSON output on stdout remains unaffected:
+
+```bash
+# Show pretty comments on the terminal while saving JSON to a file
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --output-file comments.ndjson \
+  --pretty-print
+```
+
+Output looks like:
+```
+[AuthorName] their message text here
+```
+
+**Quiet Mode (`--quiet`):** During normal operation the fetcher logs informational messages to stderr (e.g., "Received empty response", reconnection waits, page-token notices). These can be suppressed with `--quiet` without losing error messages:
+
+```bash
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --quiet
+```
+
+Both flags can be combined:
+
+```bash
+# Pretty output without the reconnection noise
+./target/release/yt-comment-fetcher \
+  --video-id YOUR_VIDEO_ID \
+  --api-key-path api-key.txt \
+  --pretty-print \
+  --quiet
+```
+
 Press Ctrl+C to stop.
 
 ### Viewing Comments with the Viewer Script

@@ -1,4 +1,5 @@
 pub mod file_consumer;
+pub mod pretty_consumer;
 pub mod sqlite_consumer;
 pub mod stdout_consumer;
 
