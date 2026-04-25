@@ -211,7 +211,8 @@ CREATE TABLE messages (
     published_at      TEXT,
     type              INTEGER,
     display_message   TEXT,
-    raw_json          TEXT NOT NULL
+    raw_json          TEXT NOT NULL,
+    next_page_token   TEXT
 );
 ```
 
