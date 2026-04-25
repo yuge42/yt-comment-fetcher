@@ -1,8 +1,9 @@
+mod consumers;
+
 use clap::Parser;
+use consumers::MessageConsumer;
 use serde::Deserialize;
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::Write;
 use tokio_stream::StreamExt;
 use yt_grpc_client::YouTubeClient;
 use yt_oauth::{OAuthConfig, OAuthManager};
@@ -45,6 +46,10 @@ struct Args {
     /// Path to output file where JSON messages will be written (one per line)
     #[arg(long)]
     output_file: Option<String>,
+
+    /// Path to SQLite database file where messages and authors will be stored (optional)
+    #[arg(long)]
+    sqlite_path: Option<String>,
 
     /// Resume streaming from the last message in the output file
     #[arg(long)]
@@ -160,7 +165,7 @@ macro_rules! attempt_reconnect {
 
 /// Macro to handle stream messages (avoids code duplication)
 macro_rules! handle_stream_message {
-    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr, $output_file:expr) => {
+    ($stream_result:expr, $next_page_token:ident, $reconnect_until:ident, $reconnect_wait_secs:expr, $consumers:expr) => {
         match $stream_result {
             Some(Ok(message)) => {
                 // Update the page token for potential reconnection
@@ -171,15 +176,11 @@ macro_rules! handle_stream_message {
                     // Log empty response to stderr instead of stdout
                     eprintln!("Received empty response (no items)");
                 } else {
-                    // Print message as JSON (non-delimited)
-                    let json = serde_json::to_string(&message)?;
-
-                    // Write to file or stdout
-                    if let Some(ref mut file) = $output_file {
-                        writeln!(file, "{}", json)?;
-                        file.flush()?;
-                    } else {
-                        println!("{}", json);
+                    // Dispatch to all registered consumers
+                    for consumer in $consumers.iter_mut() {
+                        if let Err(e) = consumer.consume(&message) {
+                            eprintln!("Consumer error: {}", e);
+                        }
                     }
                 }
             }
@@ -391,19 +392,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Open output file if specified
-    let mut output_file = if let Some(ref path) = args.output_file {
+    // Build consumers
+    // The consumers list holds all active output backends.
+    let mut consumers: Vec<Box<dyn MessageConsumer>> = Vec::new();
+
+    if let Some(ref path) = args.output_file {
         eprintln!("Output file: {}", path);
-        Some(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .map_err(|e| format!("Failed to open output file '{}': {}", path, e))?,
-        )
-    } else {
-        None
-    };
+        consumers.push(Box::new(consumers::file_consumer::FileConsumer::open(
+            path,
+        )?));
+    }
+
+    if let Some(ref path) = args.sqlite_path {
+        eprintln!("SQLite database: {}", path);
+        consumers.push(Box::new(consumers::sqlite_consumer::SqliteConsumer::open(
+            path,
+        )?));
+    }
+
+    // When no output backend is configured, fall back to writing JSON to stdout.
+    if consumers.is_empty() {
+        consumers.push(Box::new(consumers::stdout_consumer::StdoutConsumer));
+    }
 
     // Try to resume from file if requested
     let (mut chat_id, initial_page_token) = if args.resume {
@@ -584,7 +594,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             reconnect_until,
                             args.reconnect_wait_secs,
-                            output_file
+                            consumers
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
@@ -657,7 +667,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             next_page_token,
                             reconnect_until,
                             args.reconnect_wait_secs,
-                            output_file
+                            consumers
                         );
                     }
                     // Handle SIGINT (Ctrl+C)
