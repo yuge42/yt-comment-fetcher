@@ -6,7 +6,8 @@ use yt_grpc_client::LiveChatMessageListResponse;
 ///
 /// Schema:
 /// - `authors` – one row per unique channel, updated on every encounter.
-/// - `messages` – one row per live chat message item.
+/// - `messages` – one row per live chat message item; includes `next_page_token`
+///   from the response batch so the database can be used with `--resume`.
 pub struct SqliteConsumer {
     conn: Connection,
 }
@@ -41,12 +42,46 @@ impl SqliteConsumer {
                 published_at      TEXT,
                 type              INTEGER,
                 display_message   TEXT,
-                raw_json          TEXT NOT NULL
+                raw_json          TEXT NOT NULL,
+                next_page_token   TEXT
             );",
         )
         .map_err(|e| format!("Failed to initialise SQLite schema: {}", e))?;
 
+        // Migrate databases created before next_page_token was added to messages.
+        // ALTER TABLE fails if the column already exists; that error is intentionally ignored.
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN next_page_token TEXT", []);
+
         Ok(Self { conn })
+    }
+
+    /// Read the last known `live_chat_id` and `next_page_token` from the most
+    /// recently inserted message in the database.
+    ///
+    /// Returns `(chat_id, page_token)` – either or both may be `None` if the
+    /// database is empty or the messages predate the `next_page_token` column.
+    pub fn read_resume_info(
+        path: &str,
+    ) -> Result<(Option<String>, Option<String>), Box<dyn std::error::Error>> {
+        let conn = Connection::open(path)
+            .map_err(|e| format!("Failed to open SQLite database '{}': {}", path, e))?;
+
+        let result = conn.query_row(
+            "SELECT live_chat_id, next_page_token FROM messages ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        );
+
+        match result {
+            Ok((chat_id, page_token)) => Ok((chat_id, page_token)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok((None, None)),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -117,10 +152,13 @@ impl MessageConsumer for SqliteConsumer {
                     (None, None, None, None)
                 };
 
+            // Store next_page_token alongside each message so the database can be
+            // used with --resume: querying the last row gives both chat ID and token.
             tx.execute(
                 "INSERT OR IGNORE INTO messages
-                    (id, live_chat_id, author_channel_id, published_at, type, display_message, raw_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    (id, live_chat_id, author_channel_id, published_at, type,
+                     display_message, raw_json, next_page_token)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     message_id,
                     live_chat_id,
@@ -129,6 +167,7 @@ impl MessageConsumer for SqliteConsumer {
                     msg_type,
                     display_message,
                     raw_json,
+                    response.next_page_token.as_deref(),
                 ],
             )?;
         }
@@ -182,7 +221,7 @@ mod tests {
     #[test]
     fn test_open_in_memory_creates_schema() {
         let consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
-        // Verify tables exist by querying sqlite_master
+        // Verify both tables exist
         let count: i64 = consumer
             .conn
             .query_row(
@@ -294,5 +333,95 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).expect("raw_json should be valid JSON");
         assert_eq!(parsed["id"], "msg-json");
+    }
+
+    #[test]
+    fn test_consume_stores_next_page_token_on_message() {
+        let mut consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+
+        let msg = make_message("msg-tok", "chan-tok", "Tokuser", "token test");
+        let mut response = make_response(vec![msg]);
+        response.next_page_token = Some("token-abc".to_string());
+
+        consumer.consume(&response).expect("consume");
+
+        let token: Option<String> = consumer
+            .conn
+            .query_row(
+                "SELECT next_page_token FROM messages WHERE id = 'msg-tok'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(token.as_deref(), Some("token-abc"));
+    }
+
+    #[test]
+    fn test_consume_updates_next_page_token_on_subsequent_responses() {
+        let mut consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+
+        let msg1 = make_message("msg-a", "chan-a", "Alice", "first");
+        let mut resp1 = make_response(vec![msg1]);
+        resp1.next_page_token = Some("token-1".to_string());
+        consumer.consume(&resp1).expect("first consume");
+
+        let msg2 = make_message("msg-b", "chan-b", "Bob", "second");
+        let mut resp2 = make_response(vec![msg2]);
+        resp2.next_page_token = Some("token-2".to_string());
+        consumer.consume(&resp2).expect("second consume");
+
+        // The most recent message (msg-b) should carry the latest token.
+        let token: Option<String> = consumer
+            .conn
+            .query_row(
+                "SELECT next_page_token FROM messages ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            token.as_deref(),
+            Some("token-2"),
+            "latest message should carry the latest token"
+        );
+    }
+
+    #[test]
+    fn test_read_resume_info_from_file() {
+        // Write to a real temp file so read_resume_info (which opens its own connection) can read it.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("resume_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        let mut consumer = SqliteConsumer::open(db_path_str).expect("open");
+
+        let msg = make_message("msg-r", "chan-r", "Resume", "hi");
+        let mut response = make_response(vec![msg]);
+        response.next_page_token = Some("token-resume".to_string());
+        consumer.consume(&response).expect("consume");
+
+        // Drop the consumer to close its connection before read_resume_info opens another.
+        drop(consumer);
+
+        let (chat_id, page_token) =
+            SqliteConsumer::read_resume_info(db_path_str).expect("read_resume_info");
+        assert_eq!(chat_id.as_deref(), Some("chat-123"));
+        assert_eq!(page_token.as_deref(), Some("token-resume"));
+    }
+
+    #[test]
+    fn test_read_resume_info_empty_db() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("empty.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        // Create schema but write nothing
+        let _consumer = SqliteConsumer::open(db_path_str).expect("open");
+        drop(_consumer);
+
+        let (chat_id, page_token) =
+            SqliteConsumer::read_resume_info(db_path_str).expect("read_resume_info");
+        assert!(chat_id.is_none());
+        assert!(page_token.is_none());
     }
 }

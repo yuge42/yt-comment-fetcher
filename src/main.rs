@@ -51,7 +51,8 @@ struct Args {
     #[arg(long)]
     sqlite_path: Option<String>,
 
-    /// Resume streaming from the last message in the output file
+    /// Resume streaming from the last message in the output file or SQLite database.
+    /// Requires --output-file or --sqlite-path (or both).
     #[arg(long)]
     resume: bool,
 
@@ -346,8 +347,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Either --video-id or --resume must be specified".into());
     }
 
-    if args.resume && args.output_file.is_none() {
-        return Err("--output-file must be specified when using --resume".into());
+    if args.resume && args.output_file.is_none() && args.sqlite_path.is_none() {
+        return Err("--output-file or --sqlite-path must be specified when using --resume".into());
     }
 
     // Validate that API key and OAuth are mutually exclusive
@@ -439,50 +440,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         consumers.push(Box::new(consumers::pretty_consumer::PrettyConsumer));
     }
 
-    // Try to resume from file if requested
-    let (mut chat_id, initial_page_token) = if args.resume {
-        let output_path = args
-            .output_file
-            .as_ref()
-            .expect("output_file is guaranteed to be Some when resume is true");
-        eprintln!("Attempting to resume from: {}", output_path);
+    // Phase 1: Read resume state (chat_id + page_token) from file or database if requested.
+    let (resume_chat_id, resume_token): (Option<String>, Option<String>) = if args.resume {
+        if let Some(ref output_path) = args.output_file {
+            eprintln!("Attempting to resume from: {}", output_path);
 
-        match read_last_line(output_path)? {
-            Some(last_line) => {
-                eprintln!("Found last line, parsing resume info...");
-                match parse_resume_info(&last_line) {
-                    Ok((Some(cid), token)) => {
-                        eprintln!("Resuming with chat ID: {}", cid);
-                        if let Some(ref t) = token {
-                            eprintln!("Resuming from page token: {}", t);
+            match read_last_line(output_path)? {
+                Some(last_line) => {
+                    eprintln!("Found last line, parsing resume info...");
+                    match parse_resume_info(&last_line) {
+                        Ok((Some(cid), token)) => {
+                            eprintln!("Resuming with chat ID: {}", cid);
+                            if let Some(ref t) = token {
+                                eprintln!("Resuming from page token: {}", t);
+                            }
+                            (Some(cid), token)
                         }
-                        (Some(cid), token)
-                    }
-                    Ok((None, _)) => {
-                        eprintln!("Could not extract chat ID from last line");
-                        (None, None)
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to parse last line: {}", e);
-                        (None, None)
+                        Ok((None, _)) => {
+                            eprintln!("Could not extract chat ID from last line");
+                            (None, None)
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse last line: {}", e);
+                            (None, None)
+                        }
                     }
                 }
+                None => {
+                    eprintln!("Output file is empty or does not exist yet");
+                    (None, None)
+                }
             }
-            None => {
-                eprintln!("Output file is empty or does not exist yet");
-                (None, None)
+        } else if let Some(ref sqlite_path) = args.sqlite_path {
+            eprintln!("Attempting to resume from SQLite database: {}", sqlite_path);
+
+            match consumers::sqlite_consumer::SqliteConsumer::read_resume_info(sqlite_path)? {
+                (Some(cid), token) => {
+                    eprintln!("Resuming with chat ID: {}", cid);
+                    if let Some(ref t) = token {
+                        eprintln!("Resuming from page token: {}", t);
+                    }
+                    (Some(cid), token)
+                }
+                (None, _) => {
+                    eprintln!("Could not extract chat ID from SQLite database");
+                    (None, None)
+                }
             }
+        } else {
+            unreachable!("validation ensures --output-file or --sqlite-path when --resume is set");
         }
     } else {
         (None, None)
     };
 
-    // If we don't have a chat_id from resume, fetch it using video_id
-    if chat_id.is_none() {
-        let video_id = args
-            .video_id
-            .as_ref()
-            .ok_or("video-id is required when not resuming or when resume fails to find chat ID")?;
+    // Phase 2: Resolve the final chat_id and initial_page_token.
+    //
+    // When --video-id is provided, we always fetch the canonical chat ID for that
+    // video from the REST API. If the stored chat ID matches, the page token is
+    // reused for resuming; if it differs (a different video was requested), the
+    // stored token is silently discarded and the stream starts fresh — so users
+    // can keep --resume in their command even when switching video IDs.
+    //
+    // When --video-id is omitted, we rely entirely on the stored resume info.
+    let (chat_id, initial_page_token) = if let Some(ref video_id) = args.video_id {
         eprintln!("Using video ID: {}", video_id);
 
         // Get REST API address from environment variable or use default
@@ -498,21 +519,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         };
 
-        // Fetch the chat ID from the videos.list endpoint
-        chat_id = Some(
-            fetch_chat_id(
-                &rest_api_address,
-                video_id,
-                api_key.as_deref(),
-                oauth_token.as_deref(),
-            )
-            .await?,
-        );
+        let fetched_chat_id = fetch_chat_id(
+            &rest_api_address,
+            video_id,
+            api_key.as_deref(),
+            oauth_token.as_deref(),
+        )
+        .await?;
 
-        eprintln!("Got chat ID: {}", chat_id.as_ref().unwrap());
-    }
+        eprintln!("Got chat ID: {}", fetched_chat_id);
 
-    let chat_id = chat_id.expect("chat_id is guaranteed to be Some at this point");
+        // Use the stored page token only when the stored chat ID matches the
+        // fetched one — i.e. the database/file belongs to the same live stream.
+        let token = if resume_chat_id.as_deref() == Some(fetched_chat_id.as_str()) {
+            resume_token
+        } else {
+            if resume_chat_id.is_some() {
+                eprintln!("Stored chat ID does not match the specified video, starting fresh");
+            }
+            None
+        };
+
+        (fetched_chat_id, token)
+    } else {
+        // No --video-id: rely entirely on the resume info read in Phase 1.
+        match resume_chat_id {
+            Some(cid) => (cid, resume_token),
+            None => {
+                return Err("video-id is required when resume info is unavailable".into());
+            }
+        }
+    };
 
     // Get gRPC server address from environment variable or use default
     // Note: For TLS-enabled gRPC connections, tonic requires https:// prefix

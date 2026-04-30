@@ -2263,6 +2263,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "yt-grpc-client",
