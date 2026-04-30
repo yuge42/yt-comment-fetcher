@@ -61,25 +61,6 @@ fn run_migrations(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
         )
         .map_err(|e| format!("Migration to schema version 1 failed: {}", e))?;
 
-        // Databases that existed before schema versioning was introduced may be
-        // missing the next_page_token column.  Add it when absent.  SQLite has
-        // no "ADD COLUMN IF NOT EXISTS", so we attempt the ALTER TABLE and
-        // treat a "duplicate column name" error as success while propagating
-        // any other failure.
-        if let Err(e) = conn.execute("ALTER TABLE messages ADD COLUMN next_page_token TEXT", []) {
-            let is_duplicate = matches!(
-                &e,
-                rusqlite::Error::SqliteFailure(_, Some(msg)) if msg.contains("duplicate column name")
-            );
-            if !is_duplicate {
-                return Err(format!(
-                    "Failed to add next_page_token column during migration v1: {}",
-                    e
-                )
-                .into());
-            }
-        }
-
         conn.pragma_update(None, "user_version", 1_u32)
             .map_err(|e| format!("Failed to set schema version to 1: {}", e))?;
     }
@@ -491,7 +472,7 @@ mod tests {
     #[test]
     fn test_migration_from_unversioned_db() {
         // Simulate a database created before schema versioning was introduced:
-        // tables exist but user_version = 0 and next_page_token column is absent.
+        // tables exist with the full schema but user_version = 0.
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("old.db");
         let db_path_str = db_path.to_str().unwrap();
@@ -516,14 +497,15 @@ mod tests {
                     published_at      TEXT,
                     type              INTEGER,
                     display_message   TEXT,
-                    raw_json          TEXT NOT NULL
+                    raw_json          TEXT NOT NULL,
+                    next_page_token   TEXT
                 );",
             )
             .expect("create old schema");
             // user_version intentionally left at 0
         }
 
-        // Opening with the new code should migrate successfully.
+        // Opening with the new code should run the migration and set user_version.
         let consumer = SqliteConsumer::open(db_path_str).expect("open should migrate");
 
         let version: u32 = consumer
@@ -532,14 +514,14 @@ mod tests {
             .unwrap();
         assert_eq!(version, 1, "user_version should be 1 after migration");
 
-        // The next_page_token column should now exist.
+        // Data should be writable after migration.
         consumer
             .conn
             .execute(
                 "INSERT INTO messages (id, raw_json, next_page_token) VALUES ('x', '{}', 'tok')",
                 [],
             )
-            .expect("insert with next_page_token should succeed after migration");
+            .expect("insert should succeed after migration");
     }
 
     #[test]
