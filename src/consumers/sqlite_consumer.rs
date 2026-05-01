@@ -2,6 +2,10 @@ use crate::consumers::MessageConsumer;
 use rusqlite::{Connection, params};
 use yt_grpc_client::LiveChatMessageListResponse;
 
+/// The current schema version.  Increment this constant and add a new
+/// migration block inside [`run_migrations`] whenever the schema changes.
+const SCHEMA_VERSION: u32 = 1;
+
 /// Stores live chat messages in a SQLite database.
 ///
 /// Schema:
@@ -12,19 +16,28 @@ pub struct SqliteConsumer {
     conn: Connection,
 }
 
-impl SqliteConsumer {
-    /// Open (or create) the SQLite database at `path` and initialise the schema.
-    pub fn open(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = Connection::open(path)
-            .map_err(|e| format!("Failed to open SQLite database '{}': {}", path, e))?;
+/// Apply all pending schema migrations to `conn`.
+///
+/// The current schema version is tracked with the SQLite built-in
+/// `user_version` PRAGMA (an integer stored in the database header, initially
+/// 0).  Each migration step advances the version by one so the database is
+/// always left in a consistent, versioned state.
+///
+/// Adding a new migration:
+/// 1. Increment [`SCHEMA_VERSION`].
+/// 2. Add an `if current < N { … }` block below that performs the DDL and then
+///    calls `conn.pragma_update(None, "user_version", N_u32)`.
+fn run_migrations(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 
+    if current >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    // --- Migration 0 → 1: create initial tables ---
+    if current < 1 {
         conn.execute_batch(
-            // WAL (Write-Ahead Logging) journal mode offers better concurrency:
-            // readers never block writers and writers never block readers, which
-            // suits the live-streaming use-case where messages arrive continuously.
-            "PRAGMA journal_mode=WAL;
-
-            CREATE TABLE IF NOT EXISTS authors (
+            "CREATE TABLE IF NOT EXISTS authors (
                 channel_id        TEXT PRIMARY KEY,
                 channel_url       TEXT,
                 display_name      TEXT,
@@ -46,11 +59,29 @@ impl SqliteConsumer {
                 next_page_token   TEXT
             );",
         )
-        .map_err(|e| format!("Failed to initialise SQLite schema: {}", e))?;
+        .map_err(|e| format!("Migration to schema version 1 failed: {}", e))?;
 
-        // Migrate databases created before next_page_token was added to messages.
-        // ALTER TABLE fails if the column already exists; that error is intentionally ignored.
-        let _ = conn.execute("ALTER TABLE messages ADD COLUMN next_page_token TEXT", []);
+        conn.pragma_update(None, "user_version", 1_u32)
+            .map_err(|e| format!("Failed to set schema version to 1: {}", e))?;
+    }
+
+    Ok(())
+}
+
+impl SqliteConsumer {
+    /// Open (or create) the SQLite database at `path` and run any pending
+    /// schema migrations.
+    pub fn open(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let conn = Connection::open(path)
+            .map_err(|e| format!("Failed to open SQLite database '{}': {}", path, e))?;
+
+        // WAL (Write-Ahead Logging) journal mode offers better concurrency:
+        // readers never block writers and writers never block readers, which
+        // suits the live-streaming use-case where messages arrive continuously.
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(|e| format!("Failed to set WAL journal mode: {}", e))?;
+
+        run_migrations(&conn)?;
 
         Ok(Self { conn })
     }
@@ -423,5 +454,91 @@ mod tests {
             SqliteConsumer::read_resume_info(db_path_str).expect("read_resume_info");
         assert!(chat_id.is_none());
         assert!(page_token.is_none());
+    }
+
+    #[test]
+    fn test_schema_version_set_after_open() {
+        let consumer = SqliteConsumer::open(":memory:").expect("open should succeed");
+        let version: u32 = consumer
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            version, SCHEMA_VERSION,
+            "user_version should equal SCHEMA_VERSION after open"
+        );
+    }
+
+    #[test]
+    fn test_migration_from_unversioned_db() {
+        // Simulate a database created before schema versioning was introduced:
+        // tables exist with the full schema but user_version = 0.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("old.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        {
+            let conn = Connection::open(db_path_str).expect("open old db");
+            conn.execute_batch(
+                "CREATE TABLE authors (
+                    channel_id        TEXT PRIMARY KEY,
+                    channel_url       TEXT,
+                    display_name      TEXT,
+                    profile_image_url TEXT,
+                    is_verified       INTEGER,
+                    is_chat_owner     INTEGER,
+                    is_chat_sponsor   INTEGER,
+                    is_chat_moderator INTEGER
+                );
+                CREATE TABLE messages (
+                    id                TEXT PRIMARY KEY,
+                    live_chat_id      TEXT,
+                    author_channel_id TEXT REFERENCES authors(channel_id),
+                    published_at      TEXT,
+                    type              INTEGER,
+                    display_message   TEXT,
+                    raw_json          TEXT NOT NULL,
+                    next_page_token   TEXT
+                );",
+            )
+            .expect("create old schema");
+            // user_version intentionally left at 0
+        }
+
+        // Opening with the new code should run the migration and set user_version.
+        let consumer = SqliteConsumer::open(db_path_str).expect("open should migrate");
+
+        let version: u32 = consumer
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 1, "user_version should be 1 after migration");
+
+        // Data should be writable after migration.
+        consumer
+            .conn
+            .execute(
+                "INSERT INTO messages (id, raw_json, next_page_token) VALUES ('x', '{}', 'tok')",
+                [],
+            )
+            .expect("insert should succeed after migration");
+    }
+
+    #[test]
+    fn test_open_already_versioned_db_is_idempotent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("versioned.db");
+        let db_path_str = db_path.to_str().unwrap();
+
+        // First open creates and versions the schema.
+        drop(SqliteConsumer::open(db_path_str).expect("first open"));
+
+        // Second open should not fail and should leave version unchanged.
+        let consumer = SqliteConsumer::open(db_path_str).expect("second open");
+        let version: u32 = consumer
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 }
