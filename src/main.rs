@@ -13,7 +13,7 @@ use yt_oauth::{OAuthConfig, OAuthManager};
 #[command(version, about, long_about = None)]
 struct Args {
     /// YouTube video ID to fetch comments from (optional when --resume is used)
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     video_id: Option<String>,
 
     /// Path to file containing the API key for authentication
